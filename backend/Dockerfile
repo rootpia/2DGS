@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y \
     libgomp1 \
     libglib2.0-0 \
     libgtk-3-0 \
+    libgl1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Python依存関係をインストール
@@ -16,7 +17,8 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # アプリケーションをコピー
-COPY ./src/* /app
+WORKDIR /app
+COPY ./src/* .
 
 EXPOSE 18000
 

@@ -7,7 +7,7 @@ import cv2
 import io
 import random
 
-app = FastAPI(title="画像処理API", version="1.0.0")
+app = FastAPI(title="2DGS_API", version="1.0.0")
 
 # CORS設定（React開発サーバーからのアクセスを許可）
 app.add_middleware(

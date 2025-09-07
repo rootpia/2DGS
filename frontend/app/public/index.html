@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#000000" />
+    <meta name="description" content="2DGSアプリケーション" />
+    <link rel="apple-touch-icon" href="%PUBLIC_URL%/logo192.png" />
+    
+    <!-- PWA用マニフェスト -->
+    <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
+    
+    <!-- Tailwind CSS CDN（本番環境では bundler を推奨） -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- カスタム Tailwind 設定 -->
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            animation: {
+              'spin-slow': 'spin 3s linear infinite',
+              'pulse-fast': 'pulse 1s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+            },
+            colors: {
+              'brand-blue': '#3b82f6',
+              'brand-pink': '#ec4899',
+              'brand-gray': '#6b7280',
+            }
+          }
+        }
+      }
+    </script>
+    
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <title>2DGS</title>
+    
+    <style>
+      /* カスタムスタイル */
+      body {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+      }
+      
+      /* ローディングスピナー用 */
+      .loading-dots {
+        display: inline-block;
+        position: relative;
+        width: 80px;
+        height: 80px;
+      }
+      
+      .loading-dots div {
+        position: absolute;
+        top: 33px;
+        width: 13px;
+        height: 13px;
+        border-radius: 50%;
+        background: #3b82f6;
+        animation-timing-function: cubic-bezier(0, 1, 1, 0);
+      }
+      
+      .loading-dots div:nth-child(1) {
+        left: 8px;
+        animation: loading-dots1 0.6s infinite;
+      }
+      
+      .loading-dots div:nth-child(2) {
+        left: 8px;
+        animation: loading-dots2 0.6s infinite;
+      }
+      
+      .loading-dots div:nth-child(3) {
+        left: 32px;
+        animation: loading-dots2 0.6s infinite;
+      }
+      
+      .loading-dots div:nth-child(4) {
+        left: 56px;
+        animation: loading-dots3 0.6s infinite;
+      }
+      
+      @keyframes loading-dots1 {
+        0% { transform: scale(0); }
+        100% { transform: scale(1); }
+      }
+      
+      @keyframes loading-dots3 {
+        0% { transform: scale(1); }
+        100% { transform: scale(0); }
+      }
+      
+      @keyframes loading-dots2 {
+        0% { transform: translate(0, 0); }
+        100% { transform: translate(24px, 0); }
+      }
+      
+      /* カスタムスクロールバー */
+      ::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
+      }
+      
+      ::-webkit-scrollbar-track {
+        background: #f1f5f9;
+        border-radius: 4px;
+      }
+      
+      ::-webkit-scrollbar-thumb {
+        background: #cbd5e1;
+        border-radius: 4px;
+      }
+      
+      ::-webkit-scrollbar-thumb:hover {
+        background: #94a3b8;
+      }
+      
+      /* ドラッグ&ドロップ エリアの視覚効果 */
+      .drag-over {
+        border-color: #3b82f6 !important;
+        background-color: #eff6ff !important;
+        transform: scale(1.02);
+        transition: all 0.3s ease;
+      }
+      
+      /* アニメーション遅延クラス */
+      .animate-delay-100 { animation-delay: 0.1s; }
+      .animate-delay-200 { animation-delay: 0.2s; }
+      .animate-delay-300 { animation-delay: 0.3s; }
+    </style>
+  </head>
+  <body>
+    <!-- JavaScript無効時の警告 -->
+    <noscript>
+      <div style="
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        background: #f87171;
+        color: white;
+        padding: 1rem;
+        text-align: center;
+        z-index: 9999;
+      ">
+        このアプリケーションを実行するにはJavaScriptを有効にしてください。
+      </div>
+    </noscript>
+    
+    <!-- React アプリのマウントポイント -->
+    <div id="root"></div>
+    
+    <!-- 初期ローディング画面（React読み込み中に表示） -->
+    <div id="initial-loader" style="
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%);
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      z-index: 1000;
+    ">
+      <div class="loading-dots">
+        <div></div>
+        <div></div>
+        <div></div>
+        <div></div>
+      </div>
+      <h2 style="
+        margin-top: 2rem;
+        color: #374151;
+        font-size: 1.5rem;
+        font-weight: 600;
+      ">アプリを読み込み中...</h2>
+      <p style="
+        margin-top: 0.5rem;
+        color: #6b7280;
+        font-size: 1rem;
+      ">少々お待ちください</p>
+    </div>
+    
+    <script>
+      // React読み込み完了後に初期ローダーを非表示
+      window.addEventListener('load', function() {
+        setTimeout(function() {
+          const loader = document.getElementById('initial-loader');
+          if (loader) {
+            loader.style.opacity = '0';
+            loader.style.transition = 'opacity 0.5s ease';
+            setTimeout(function() {
+              loader.remove();
+            }, 500);
+          }
+        }, 1000); // 1秒後に非表示開始
+      });
+      
+      // エラーハンドリング
+      window.addEventListener('error', function(e) {
+        console.error('アプリケーションエラー:', e.error);
+      });
+      
+      // 未処理のPromise拒否をキャッチ
+      window.addEventListener('unhandledrejection', function(e) {
+        console.error('未処理のPromise拒否:', e.reason);
+      });
+    </script>
+    
+    <!--
+      このHTMLファイルはテンプレートです。
+      ビルド時に、publicフォルダ内のファイルが
+      ビルド出力フォルダにコピーされます。
+
+      %PUBLIC_URL% プレースホルダーは、
+      ビルド時に public フォルダの URL に置換されます。
+      
+      Create React App の詳細については、以下を参照:
+      https://facebook.github.io/create-react-app/docs/getting-started
+      https://github.com/facebook/create-react-app
+    -->
+  </body>
+</html>

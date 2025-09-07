@@ -1,0 +1,4 @@
+# https://www.robotstxt.org/robotstxt.html
+# 一応検索エンジンにクローリングされんようにしておく
+User-agent: *
+Disallow:

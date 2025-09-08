@@ -12,6 +12,7 @@ services:
 #      - ./frontend/public:/app/public
     environment:
       - CHOKIDAR_USEPOLLING=true
+      - REACT_APP_BACKEND_URL=http://localhost:18000
     depends_on:
       - backend
     networks:

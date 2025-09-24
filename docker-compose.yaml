@@ -7,9 +7,8 @@ services:
     image: gsapp_front
     ports:
       - "3000:3000"
-#    volumes:
-#      - ./frontend/src:/app/src
-#      - ./frontend/public:/app/public
+    volumes:
+      - ./:/mnt/project
     environment:
       - CHOKIDAR_USEPOLLING=true
       - REACT_APP_BACKEND_URL=http://localhost:18000
@@ -26,8 +25,8 @@ services:
     image: gsapp_back
     ports:
       - "18000:18000"
-#    volumes:
-#      - ./backend:/app
+    volumes:
+      - ./:/mnt/project
     environment:
       - PYTHONPATH=/app
     networks:

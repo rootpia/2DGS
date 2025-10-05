@@ -1,45 +1,56 @@
-import React, { useState, useRef } from 'react';
-import { Upload, Camera, Loader2 } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { Upload, Play, Square, Loader2, Cpu, Settings, RefreshCw } from 'lucide-react';
 
 const ImageProcessingApp = () => {
+  // 状態管理
+  const [appState, setAppState] = useState('waiting'); // waiting, loaded, training, paused
   const [originalImage, setOriginalImage] = useState(null);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [processedImage2DGS, setProcessedImage2DGS] = useState(null);
-  const [gaussianPoints, setGaussianPoints] = useState(null);
-  const [processingStage, setProcessingStage] = useState(0); // 0: 待機, 1: オリジナル処理中, 2: 2DGS&ガウシアンポイント処理中, 3: 完了
+  const [predictedImage, setPredictedImage] = useState(null);
+  const [pointsImage, setPointsImage] = useState(null);
+  const [deviceInfo, setDeviceInfo] = useState('');
+  const [logs, setLogs] = useState([]);
+  const [currentStep, setCurrentStep] = useState(0);
+  const [totalSteps, setTotalSteps] = useState(0);
+  const [currentLoss, setCurrentLoss] = useState(null);
   const [currentFile, setCurrentFile] = useState(null);
+  
+  // パラメータ
+  const [numGaussians, setNumGaussians] = useState(1000);
+  const [learningRate, setLearningRate] = useState(0.01);
+  const [numSteps, setNumSteps] = useState(10000);
+  
   const fileInputRef = useRef(null);
+  const wsRef = useRef(null);
+  const logsEndRef = useRef(null);
 
-  // Pythonバックエンドにオリジナル画像を送信してグレースケール変換
-  const processOriginal = async (file) => {
-    const formData = new FormData();
-    formData.append('image', file);
+  // デバイス情報取得
+  useEffect(() => {
+    fetch('http://localhost:18000/device-info')
+      .then(res => res.json())
+      .then(data => setDeviceInfo(data.device))
+      .catch(err => console.error('デバイス情報取得エラー:', err));
+  }, []);
 
-    try {
-      const response = await fetch('http://localhost:18000/process/original', {
-        method: 'POST',
-        body: formData,
-      });
+  // ログ自動スクロール
+  useEffect(() => {
+    logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [logs]);
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const blob = await response.blob();
-      return URL.createObjectURL(blob);
-    } catch (error) {
-      console.error('オリジナル画像処理エラー:', error);
-      throw error;
-    }
+  const addLog = (message) => {
+    const timestamp = new Date().toLocaleTimeString();
+    setLogs(prev => [...prev, `[${timestamp}] ${message}`]);
   };
 
-  // Pythonバックエンドに画像を送信して2DGS処理を行う
-  const process2DGS = async (file) => {
-    const formData = new FormData();
-    formData.append('image', file);
+  const initializeWithImage = async (file) => {
+    setAppState('loading');
+    addLog(`画像初期化開始: ガウシアン数=${numGaussians}`);
 
     try {
-      const response = await fetch('http://localhost:18000/process/2dgs', {
+      const formData = new FormData();
+      formData.append('image', file);
+      formData.append('num_gaussians', numGaussians);
+
+      const response = await fetch('http://localhost:18000/initialize', {
         method: 'POST',
         body: formData,
       });
@@ -48,34 +59,21 @@ const ImageProcessingApp = () => {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
 
-      const blob = await response.blob();
-      return URL.createObjectURL(blob);
+      const data = await response.json();
+      
+      setOriginalImage(`data:image/png;base64,${data.original_image}`);
+      setPredictedImage(`data:image/png;base64,${data.predicted_image}`);
+      setPointsImage(`data:image/png;base64,${data.points_image}`);
+      setAppState('loaded');
+      
+      addLog(`初期化完了: ${numGaussians}個のガウシアンで初期化`);
+      addLog('GaussianSplatting実行ボタンを押してください');
+
     } catch (error) {
-      console.error('2DGS処理エラー:', error);
-      throw error;
-    }
-  };
-
-  // Pythonバックエンドでガウシアンポイント画像を生成
-  const generateGaussianPointsImage = async (file) => {
-    const formData = new FormData();
-    formData.append('image', file);
-
-    try {
-      const response = await fetch('http://localhost:18000/process/gaussian-points', {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const blob = await response.blob();
-      return URL.createObjectURL(blob);
-    } catch (error) {
-      console.error('ガウシアンポイント生成エラー:', error);
-      throw error;
+      console.error('画像初期化エラー:', error);
+      addLog(`エラー: ${error.message}`);
+      setAppState('waiting');
+      alert('画像初期化中にエラーが発生しました。');
     }
   };
 
@@ -85,37 +83,144 @@ const ImageProcessingApp = () => {
 
     // ファイルを保存
     setCurrentFile(file);
-
+    
     // 状態をリセット
-    setOriginalImage(null);
-    setProcessedImage2DGS(null);
-    setGaussianPoints(null);
-    setIsProcessing(true);
-    setProcessingStage(1);
+    setLogs([]);
+    setCurrentStep(0);
+    setTotalSteps(0);
+    setCurrentLoss(null);
 
+    // input要素の値をリセット（同じファイルを再選択可能にする）
+    event.target.value = '';
+
+    // 現在のスクロール位置を保存
+    const scrollY = window.scrollY;
+
+    await initializeWithImage(file);
+    
+    // スクロール位置を復元
+    window.scrollTo(0, scrollY);
+  };
+
+  const handleReinitialize = async () => {
+    if (!currentFile) return;
+    
+    setAppState('loading');
+    setLogs([]);
+    setCurrentStep(0);
+    setTotalSteps(0);
+    setCurrentLoss(null);
+    
+    addLog(`パラメータ再適用: ガウシアン数=${numGaussians}`);
+    
+    // 現在のスクロール位置を保存
+    const scrollY = window.scrollY;
+    
     try {
-      // 1. オリジナル画像をPythonバックエンドで処理（グレースケール変換）
-      const processedOriginal = await processOriginal(file);
-      setOriginalImage(processedOriginal);
-      setProcessingStage(2);
+      const response = await fetch(`http://localhost:18000/reinitialize?num_gaussians=${numGaussians}`, {
+        method: 'POST',
+      });
 
-      // 2. 2DGS処理とガウシアンポイント生成を並列実行
-      const [processed2DGS, gaussianImage] = await Promise.all([
-        process2DGS(file),
-        generateGaussianPointsImage(file)
-      ]);
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
 
-      // 両方の結果を一気に設定
-      setProcessedImage2DGS(processed2DGS);
-      setGaussianPoints(gaussianImage);
-      setProcessingStage(3);
-      setIsProcessing(false);
+      const data = await response.json();
+      
+      setPredictedImage(`data:image/png;base64,${data.predicted_image}`);
+      setPointsImage(`data:image/png;base64,${data.points_image}`);
+      setAppState('loaded');
+      
+      addLog(`再初期化完了: ${numGaussians}個のガウシアンで初期化`);
+      addLog('GaussianSplatting実行ボタンを押してください');
 
     } catch (error) {
-      console.error('画像処理エラー:', error);
-      setIsProcessing(false);
-      setProcessingStage(0);
-      alert('画像処理中にエラーが発生しました。Pythonサーバーが起動しているか確認してください。');
+      console.error('再初期化エラー:', error);
+      addLog(`エラー: ${error.message}`);
+      setAppState('loaded');
+      alert('再初期化中にエラーが発生しました。');
+    }
+    
+    // スクロール位置を復元
+    window.scrollTo(0, scrollY);
+  };
+
+  const startTraining = () => {
+    if (appState !== 'loaded' && appState !== 'paused') return;
+
+    setAppState('training');
+    addLog(`学習開始: LR=${learningRate}, Steps=${numSteps}`);
+    setCurrentStep(0);
+    setTotalSteps(numSteps);
+
+    // WebSocket接続
+    const ws = new WebSocket('ws://localhost:18000/ws/train');
+    wsRef.current = ws;
+
+    ws.onopen = () => {
+      addLog('WebSocket接続確立');
+      ws.send(JSON.stringify({
+        learning_rate: learningRate,
+        num_steps: numSteps,
+        update_interval: 100
+      }));
+    };
+
+    ws.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      
+      if (data.type === 'update') {
+        setCurrentStep(data.step);
+        setCurrentLoss(data.loss);
+        setPredictedImage(`data:image/png;base64,${data.predicted_image}`);
+        setPointsImage(`data:image/png;base64,${data.points_image}`);
+        addLog(data.message);
+      } else if (data.type === 'complete') {
+        addLog('学習完了');
+        setAppState('paused');
+        ws.close();
+      } else if (data.type === 'error') {
+        addLog(`エラー: ${data.message}`);
+        setAppState('paused');
+        ws.close();
+      } else if (data.type === 'log') {
+        addLog(data.message);
+      }
+    };
+
+    ws.onerror = (error) => {
+      console.error('WebSocketエラー:', error);
+      addLog('WebSocket接続エラー');
+      setAppState('paused');
+    };
+
+    ws.onclose = () => {
+      addLog('WebSocket接続終了');
+      if (appState === 'training') {
+        setAppState('paused');
+      }
+    };
+  };
+
+  const stopTraining = async () => {
+    if (appState !== 'training') return;
+
+    addLog('学習中断リクエスト送信...');
+    
+    try {
+      await fetch('http://localhost:18000/stop', {
+        method: 'POST',
+      });
+      
+      if (wsRef.current) {
+        wsRef.current.close();
+      }
+      
+      setAppState('paused');
+      addLog('学習を中断しました');
+    } catch (error) {
+      console.error('中断エラー:', error);
+      addLog(`中断エラー: ${error.message}`);
     }
   };
 
@@ -123,260 +228,302 @@ const ImageProcessingApp = () => {
     fileInputRef.current?.click();
   };
 
-  const getStageLabel = (stage) => {
-    switch(stage) {
-      case 0: return '待機中';
-      case 1: return 'オリジナル画像処理中...';
-      case 2: return '2DGS処理 & ガウシアンポイント生成中...';
-      case 3: return '処理完了';
-      default: return '不明';
-    }
+  const resetApp = () => {
+    setAppState('waiting');
+    setOriginalImage(null);
+    setPredictedImage(null);
+    setPointsImage(null);
+    setLogs([]);
+    setCurrentStep(0);
+    setTotalSteps(0);
+    setCurrentLoss(null);
+    setCurrentFile(null);
   };
 
-  const getProgressPercentage = (stage) => {
-    switch(stage) {
-      case 0: return 0;
-      case 1: return 33;
-      case 2: return 66;
-      case 3: return 100;
-      default: return 0;
-    }
-  };
+  const progressPercentage = totalSteps > 0 ? (currentStep / totalSteps) * 100 : 0;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-100 to-gray-200 p-6">
       <div className="max-w-7xl mx-auto">
-        <h1 className="text-4xl font-bold text-center mb-8 text-gray-800">
-          2DGSアプリケーション
-        </h1>
-        
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* 左側: オリジナル画像（バックエンド処理済み） */}
+        {/* ヘッダー */}
+        <div className="mb-8">
+          <div className="flex items-center justify-between">
+            <h1 className="text-4xl font-bold text-gray-800">
+              2DGS
+            </h1>
+            <div className="flex items-center gap-4 text-sm text-gray-600">
+              <div className="flex items-center gap-2 bg-white px-4 py-2 rounded-lg shadow">
+                <Cpu className="w-4 h-4" />
+                <span>デバイス: {deviceInfo || '取得中...'}</span>
+              </div>
+              <div className="bg-white px-4 py-2 rounded-lg shadow">
+                状態: <span className="font-semibold">{
+                  appState === 'waiting' ? '待機中' :
+                  appState === 'loading' ? '読み込み中' :
+                  appState === 'loaded' ? '準備完了' :
+                  appState === 'training' ? '学習中' :
+                  appState === 'paused' ? '一時停止' : '不明'
+                }</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* 画像表示エリア */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+          {/* オリジナル画像 */}
           <div className="bg-white rounded-xl shadow-lg p-6">
-            <h2 className="text-xl font-semibold mb-4 text-gray-700 flex items-center gap-2">
-              <Camera className="w-5 h-5" />
-              Original Image (Grayscale)
+            <h2 className="text-xl font-semibold mb-4 text-gray-700">
+              Original Image
             </h2>
-            
-            <div className="border-2 border-dashed border-gray-300 rounded-lg aspect-square flex items-center justify-center bg-gray-50 relative overflow-hidden">
+            <div className="border-2 border-dashed border-gray-300 rounded-lg aspect-square flex items-center justify-center bg-gray-50 overflow-hidden">
               {originalImage ? (
                 <img 
                   src={originalImage} 
-                  alt="Original Processed" 
+                  alt="Original" 
                   className="max-w-full max-h-full object-contain"
                 />
-              ) : processingStage === 1 ? (
+              ) : appState === 'loading' ? (
                 <div className="text-center">
                   <Loader2 className="w-8 h-8 text-blue-500 animate-spin mx-auto mb-2" />
-                  <p className="text-gray-600">Pythonで画像読み込み中...</p>
+                  <p className="text-gray-600">画像読み込み中...</p>
                 </div>
               ) : (
                 <div className="text-center">
                   <Upload className="w-12 h-12 text-gray-400 mx-auto mb-2" />
-                  <p className="text-gray-500 mb-4">画像をアップロードしてください</p>
+                  <p className="text-gray-500 mb-4">画像をアップロード</p>
                   <button
                     onClick={handleUploadClick}
-                    disabled={isProcessing}
-                    className="bg-blue-500 hover:bg-blue-600 disabled:bg-gray-400 text-white px-6 py-2 rounded-lg transition-colors"
+                    className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-2 rounded-lg transition-colors"
                   >
                     画像を選択
                   </button>
                 </div>
               )}
             </div>
-            
             <input
               ref={fileInputRef}
               type="file"
               accept="image/*"
               onChange={handleImageUpload}
               className="hidden"
-              disabled={isProcessing}
             />
             
-            {/* オリジナル画像の処理状況 */}
-            <div className="mt-4">
-              <div className="flex justify-between text-sm text-gray-600 mb-1">
-                <span>オリジナル画像処理 (Python)</span>
-                <span>{processingStage >= 2 ? '100%' : processingStage === 1 ? '処理中...' : '0%'}</span>
-              </div>
-              <div className="w-full bg-gray-200 rounded-full h-2">
-                <div 
-                  className={`h-2 rounded-full transition-all duration-500 ${
-                    processingStage >= 2 ? 'bg-green-500 w-full' : 
-                    processingStage === 1 ? 'bg-blue-500 w-3/4 animate-pulse' : 'bg-gray-300 w-0'
-                  }`}
-                ></div>
-              </div>
-            </div>
-            
-            {originalImage && !isProcessing && (
+            {originalImage && (
               <button
                 onClick={handleUploadClick}
                 className="w-full mt-4 bg-gray-500 hover:bg-gray-600 text-white py-2 rounded-lg transition-colors"
+                disabled={appState === 'training'}
               >
                 別の画像を選択
               </button>
             )}
           </div>
 
-          {/* 中央: 2DGS処理結果 */}
+          {/* 予測画像 */}
           <div className="bg-white rounded-xl shadow-lg p-6">
             <h2 className="text-xl font-semibold mb-4 text-gray-700">
-              2DGS (Optimized)
+              Predicted Image
             </h2>
-            
-            <div className="border-2 border-gray-200 rounded-lg aspect-square flex items-center justify-center bg-gray-50 relative overflow-hidden">
-              {processedImage2DGS ? (
+            <div className="border-2 border-gray-200 rounded-lg aspect-square flex items-center justify-center bg-gray-50 overflow-hidden">
+              {predictedImage ? (
                 <img 
-                  src={processedImage2DGS} 
-                  alt="2DGS Processed" 
-                  className="max-w-full max-h-full object-contain opacity-80"
+                  src={predictedImage} 
+                  alt="Predicted" 
+                  className="max-w-full max-h-full object-contain"
                 />
-              ) : processingStage === 2 ? (
-                <div className="text-center">
-                  <Loader2 className="w-8 h-8 text-blue-500 animate-spin mx-auto mb-2" />
-                  <p className="text-gray-600">Pythonで2DGS処理中...</p>
-                </div>
               ) : (
                 <div className="text-center text-gray-400">
                   <p>処理待機中</p>
                 </div>
               )}
             </div>
-            
-            <div className="mt-4">
-              <div className="flex justify-between text-sm text-gray-600 mb-1">
-                <span>2DGS処理 (Python)</span>
-                <span>{processingStage >= 3 ? '100%' : processingStage === 2 ? '処理中...' : '0%'}</span>
+            {currentLoss !== null && (
+              <div className="mt-3 text-sm text-gray-600">
+                現在のLoss: <span className="font-mono font-semibold">{currentLoss.toFixed(6)}</span>
               </div>
-              <div className="w-full bg-gray-200 rounded-full h-2">
-                <div 
-                  className={`h-2 rounded-full transition-all duration-500 ${
-                    processingStage >= 3 ? 'bg-green-500 w-full' : 
-                    processingStage === 2 ? 'bg-blue-500 w-3/4 animate-pulse' : 'bg-gray-300 w-0'
-                  }`}
-                ></div>
-              </div>
-            </div>
+            )}
           </div>
 
-          {/* 右側: ガウシアンポイント */}
+          {/* ガウシアンポイント */}
           <div className="bg-white rounded-xl shadow-lg p-6">
             <h2 className="text-xl font-semibold mb-4 text-gray-700">
               Gaussian Points
             </h2>
-            
-            <div className="border-2 border-gray-200 rounded-lg aspect-square flex items-center justify-center bg-gray-50 relative overflow-hidden">
-              {gaussianPoints ? (
+            <div className="border-2 border-gray-200 rounded-lg aspect-square flex items-center justify-center bg-gray-50 overflow-hidden">
+              {pointsImage ? (
                 <img 
-                  src={gaussianPoints} 
+                  src={pointsImage} 
                   alt="Gaussian Points" 
                   className="max-w-full max-h-full object-contain"
                 />
-              ) : processingStage === 2 ? (
-                <div className="text-center">
-                  <Loader2 className="w-8 h-8 text-pink-500 animate-spin mx-auto mb-2" />
-                  <p className="text-gray-600">Pythonでガウシアンポイント生成中...</p>
-                </div>
               ) : (
                 <div className="text-center text-gray-400">
                   <p>処理待機中</p>
                 </div>
               )}
             </div>
-            
-            <div className="mt-4">
-              <div className="flex justify-between text-sm text-gray-600 mb-1">
-                <span>ガウシアンポイント生成 (Python)</span>
-                <span>{processingStage >= 3 ? '100%' : processingStage === 2 ? '処理中...' : '0%'}</span>
-              </div>
-              <div className="w-full bg-gray-200 rounded-full h-2">
-                <div 
-                  className={`h-2 rounded-full transition-all duration-500 ${
-                    processingStage >= 3 ? 'bg-green-500 w-full' : 
-                    processingStage === 2 ? 'bg-pink-500 w-2/3 animate-pulse' : 'bg-gray-300 w-0'
-                  }`}
-                ></div>
-              </div>
-            </div>
-            
-            {processingStage >= 3 && (
+            {totalSteps > 0 && (
               <div className="mt-3 text-sm text-gray-600">
-                全Python処理完了
+                進捗: <span className="font-semibold">{currentStep} / {totalSteps}</span>
               </div>
             )}
           </div>
         </div>
 
-        {/* 全体の処理状況表示 */}
-        {isProcessing && (
-          <div className="mt-8 bg-white rounded-xl shadow-lg p-6">
-            <h3 className="text-lg font-semibold mb-4 text-gray-700 flex items-center gap-2">
-              <Loader2 className="w-5 h-5 animate-spin" />
-              Python処理状況: {getStageLabel(processingStage)}
-            </h3>
-            
-            {/* 全体プログレスバー */}
-            <div className="mb-4">
-              <div className="flex justify-between text-sm text-gray-600 mb-1">
-                <span>全体進捗</span>
-                <span>{getProgressPercentage(processingStage)}%</span>
-              </div>
-              <div className="w-full bg-gray-200 rounded-full h-3">
-                <div 
-                  className="h-3 bg-gradient-to-r from-blue-500 to-green-500 rounded-full transition-all duration-500"
-                  style={{ width: `${getProgressPercentage(processingStage)}%` }}
-                ></div>
-              </div>
+        {/* パラメータ設定 - 常に表示 */}
+        <div className="bg-white rounded-xl shadow-lg p-6 mb-6">
+          <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
+            <Settings className="w-5 h-5" />
+            パラメータ設定
+          </h2>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                ガウシアン数
+              </label>
+              <input
+                type="number"
+                value={numGaussians}
+                onChange={(e) => setNumGaussians(parseInt(e.target.value))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                min="1"
+                max="5000"
+                step="100"
+                disabled={appState === 'training'}
+              />
             </div>
-            
-            <div className="space-y-3">
-              <div className={`flex items-center gap-3 ${processingStage >= 1 ? 'text-blue-600' : 'text-gray-400'}`}>
-                <div className={`w-4 h-4 rounded-full ${processingStage >= 2 ? 'bg-green-500' : processingStage === 1 ? 'bg-blue-500 animate-pulse' : 'bg-gray-300'}`}></div>
-                <span>Python: オリジナル画像処理（グレースケール変換） → http://localhost:18000/process/original</span>
-              </div>
-              <div className={`flex items-center gap-3 ${processingStage >= 2 ? 'text-blue-600' : 'text-gray-400'}`}>
-                <div className={`w-4 h-4 rounded-full ${processingStage >= 3 ? 'bg-green-500' : processingStage === 2 ? 'bg-blue-500 animate-pulse' : 'bg-gray-300'}`}></div>
-                <span>Python: 2DGS最適化処理 (並列実行) → http://localhost:18000/process/2dgs</span>
-              </div>
-              <div className={`flex items-center gap-3 ${processingStage >= 2 ? 'text-pink-600' : 'text-gray-400'}`}>
-                <div className={`w-4 h-4 rounded-full ${processingStage >= 3 ? 'bg-green-500' : processingStage === 2 ? 'bg-pink-500 animate-pulse' : 'bg-gray-300'}`}></div>
-                <span>Python: ガウシアンポイント生成 (並列実行) → http://localhost:18000/process/gaussian-points</span>
-              </div>
-              <div className={`flex items-center gap-3 ${processingStage >= 3 ? 'text-green-600' : 'text-gray-400'}`}>
-                <div className={`w-4 h-4 rounded-full ${processingStage >= 3 ? 'bg-green-500' : 'bg-gray-300'}`}></div>
-                <span>全処理完了 - 中央と右の画像が同時に表示</span>
-              </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                学習率
+              </label>
+              <input
+                type="number"
+                value={learningRate}
+                onChange={(e) => setLearningRate(parseFloat(e.target.value))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                min="0.001"
+                max="0.1"
+                step="0.001"
+                disabled={appState === 'training'}
+              />
             </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                学習ステップ数
+              </label>
+              <input
+                type="number"
+                value={numSteps}
+                onChange={(e) => setNumSteps(parseInt(e.target.value))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                min="100"
+                max="50000"
+                step="100"
+                disabled={appState === 'training'}
+              />
+            </div>
+          </div>
+          
+          {/* 再初期化ボタン（画像読み込み後のみ表示） */}
+          {(appState === 'loaded' || appState === 'paused') && (
+            <button
+              onClick={handleReinitialize}
+              className="w-full bg-purple-500 hover:bg-purple-600 text-white px-4 py-2 rounded-lg transition-colors flex items-center justify-center gap-2"
+              disabled={appState === 'training'}
+            >
+              <RefreshCw className="w-4 h-4" />
+              パラメータを適用して再初期化
+            </button>
+          )}
+        </div>
+
+        {/* コントロールパネル */}
+        {(appState === 'loaded' || appState === 'training' || appState === 'paused') && (
+          <div className="bg-white rounded-xl shadow-lg p-6 mb-6">
+            <h2 className="text-xl font-semibold mb-4">
+              学習コントロール
+            </h2>
             
-            {/* Python API接続状況 */}
-            <div className="mt-4 p-3 bg-gray-50 rounded-lg">
-              <h4 className="font-semibold text-gray-700 mb-2">Python API接続情報</h4>
-              <div className="text-sm text-gray-600 space-y-1">
-                <div>🔗 バックエンドURL: http://localhost:18000</div>
-                <div>📡 通信方式: HTTP POST (multipart/form-data)</div>
-                <div>🐍 Python処理: FastAPI + OpenCV + PIL</div>
-                <div>⚡ 並列処理: 2DGS & ガウシアンポイント同時実行</div>
-                <div>📊 処理段階: {currentFile ? `${currentFile.name} を処理中` : 'ファイル待機中'}</div>
+            {/* プログレスバー */}
+            {totalSteps > 0 && (
+              <div className="mb-4">
+                <div className="flex justify-between text-sm text-gray-600 mb-1">
+                  <span>学習進捗</span>
+                  <span>{progressPercentage.toFixed(1)}%</span>
+                </div>
+                <div className="w-full bg-gray-200 rounded-full h-3">
+                  <div 
+                    className="h-3 bg-gradient-to-r from-blue-500 to-green-500 rounded-full transition-all duration-300"
+                    style={{ width: `${progressPercentage}%` }}
+                  ></div>
+                </div>
               </div>
+            )}
+
+            {/* ボタン */}
+            <div className="flex gap-4">
+              {appState === 'loaded' || appState === 'paused' ? (
+                <button
+                  onClick={startTraining}
+                  className="flex-1 bg-green-500 hover:bg-green-600 text-white px-6 py-3 rounded-lg transition-colors flex items-center justify-center gap-2 font-semibold"
+                >
+                  <Play className="w-5 h-5" />
+                  {appState === 'paused' ? '学習再開' : 'GaussianSplatting実行'}
+                </button>
+              ) : (
+                <button
+                  onClick={stopTraining}
+                  className="flex-1 bg-red-500 hover:bg-red-600 text-white px-6 py-3 rounded-lg transition-colors flex items-center justify-center gap-2 font-semibold"
+                >
+                  <Square className="w-5 h-5" />
+                  学習中断
+                </button>
+              )}
+              
+              <button
+                onClick={resetApp}
+                className="bg-gray-500 hover:bg-gray-600 text-white px-6 py-3 rounded-lg transition-colors"
+                disabled={appState === 'training'}
+              >
+                リセット
+              </button>
             </div>
           </div>
         )}
 
-        {/* サーバー接続確認情報 */}
-        {!isProcessing && processingStage === 0 && (
+        {/* ログ表示 */}
+        {logs.length > 0 && (
+          <div className="bg-white rounded-xl shadow-lg p-6">
+            <h2 className="text-xl font-semibold mb-4 text-gray-700">
+              処理ログ
+            </h2>
+            <div className="bg-gray-900 text-green-400 p-4 rounded-lg font-mono text-sm h-64 overflow-y-auto">
+              {logs.map((log, index) => (
+                <div key={index} className="mb-1">
+                  {log}
+                </div>
+              ))}
+              <div ref={logsEndRef} />
+            </div>
+          </div>
+        )}
+
+        {/* 説明 */}
+        {appState === 'waiting' && (
           <div className="mt-8 bg-blue-50 border border-blue-200 rounded-xl p-6">
-            <h3 className="text-lg font-semibold mb-2 text-blue-800">Python API準備完了</h3>
+            <h3 className="text-lg font-semibold mb-2 text-blue-800">使い方</h3>
             <div className="text-sm text-blue-700 space-y-2">
-              <p>以下のエンドポイントが利用可能です：</p>
-              <div className="bg-blue-100 p-3 rounded font-mono text-xs space-y-1">
-                <div>GET  http://localhost:18000/health - サーバー状態確認</div>
-                <div>POST http://localhost:18000/process/original - オリジナル画像処理</div>
-                <div>POST http://localhost:18000/process/2dgs - 2DGS処理</div>
-                <div>POST http://localhost:18000/process/gaussian-points - ガウシアンポイント生成</div>
+              <p>1. パラメータを設定してください（ガウシアン数、学習率、ステップ数）</p>
+              <p>2. 画像をアップロードすると、GaussianSplattingの初期化が行われます</p>
+              <p>3. 画像読み込み後もパラメータを変更し、「パラメータを適用して再初期化」ボタンで再初期化できます</p>
+              <p>4. 「GaussianSplatting実行」ボタンで最適化計算を開始します</p>
+              <p>5. 学習中は中央と右側の画像がリアルタイムで更新されます</p>
+              <p>6. 「学習中断」ボタンでいつでも処理を停止できます</p>
+              <div className="mt-4 p-3 bg-blue-100 rounded">
+                <p className="font-semibold">📡 Python FastAPI Backend: http://localhost:18000</p>
+                <p className="mt-1">WebSocketで学習状態をリアルタイム送信</p>
               </div>
-              <p>画像をアップロードすると、2DGS処理とガウシアンポイント生成が並列実行され、真ん中と右の画像が一気に表示されます。</p>
             </div>
           </div>
         )}

@@ -19,15 +19,15 @@ class ImageManager:
 
     @staticmethod
     def open_from_uploadfile(file: UploadFile) -> Image:
-    """アップロードファイルからPIL Imageを作成"""
-    try:
-        image_data = file.file.read()
-        image = Image.open(io.BytesIO(image_data))
-        if image.mode == 'RGBA':
-            image = image.convert('RGB')
-        return image
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"画像の読み込みに失敗しました: {str(e)}")
+        """アップロードファイルからPIL Imageを作成"""
+        try:
+            image_data = file.file.read()
+            image = Image.open(io.BytesIO(image_data))
+            if image.mode == 'RGBA':
+                image = image.convert('RGB')
+            return image
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"画像の読み込みに失敗しました: {str(e)}")
 
     @staticmethod
     def pil_to_bytes(image: Image.Image, format: str = "PNG") -> io.BytesIO:
@@ -91,9 +91,6 @@ class ImageManager:
         return pil_image
 
 if __name__ == "__main__":
-    pil_img = ImageManager.open_from_filepath("____unknown_path____")
-    print(pil_img)
-
     pil_img = ImageManager.open_from_filepath("/mnt/project/testdata/02_kirara_undercoat_black-modified.png")
     pil_gray = pil_img.convert("L")
     print(pil_gray.mode)
@@ -103,19 +100,6 @@ if __name__ == "__main__":
     pil_gray = ImageManager.cv2_to_pil(cv_img)
     print(pil_gray.mode)
     cv2_bytes = ImageManager.cv2_to_bytes(cv_img, "PNG")
-    print(cv2_bytes.getvalue()) 
+    print(len(cv2_bytes.getvalue())) 
     pil_bytes = ImageManager.pil_to_bytes(pil_gray, "PNG")
-    print(pil_bytes.getvalue()) 
-
-    #---------------
-    pil_color = pil_img.convert("RGB")
-    print(pil_color.mode)
-    print(pil_color.size)
-    cv_img = ImageManager.pil_to_cv2(pil_color)
-    print(cv_img.shape)
-    pil_color = ImageManager.cv2_to_pil(cv_img)
-    print(pil_color.mode)
-    cv2_bytes = ImageManager.cv2_to_bytes(cv_img, "PNG")
-    print(cv2_bytes.getvalue()) 
-    pil_bytes = ImageManager.pil_to_bytes(pil_color, "PNG")
-    print(pil_bytes.getvalue()) 
+    print(len(pil_bytes.getvalue()))

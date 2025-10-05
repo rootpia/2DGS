@@ -1,19 +1,21 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import FastAPI, File, UploadFile, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 import numpy as np
-from PIL import Image, ImageFilter, ImageDraw
-import cv2
+from PIL import Image
 import io
-import random
-import colorsys
+import asyncio
+import json
+from typing import Optional
 from ImageManager import ImageManager
 from GaussianSplatting2D import GaussianSplatting2D
 
 # Global
-APP_VERSION = "1.0.0"
+APP_VERSION = "2.0.0"
 app = FastAPI(title="2dgs_API", version=APP_VERSION)
-# CORS設定（Reactサーバからのアクセスを許可）
+
+# CORS設定
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "http://frontend:3000"],
@@ -21,257 +23,195 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-gs2 = None # GaussianSplatting2D()
 
+# グローバル変数
+gs_instance: Optional[GaussianSplatting2D] = None
+is_processing = False
+should_stop = False
 
-def load_image_from_upload(file: UploadFile) -> Image.Image:
-    """アップロードファイルからPIL Imageを作成"""
-    image = ImageManager.open_from_uploadfile(file)
-    return image
-
-def apply_2dgs_effect(image: Image.Image) -> Image.Image:
-    """2DGS風の画像処理を適用"""
-    try:
-        # グレースケール変換
-        gray_image = image.convert('L')
-        
-        # PILからOpenCVに変換
-        cv_image = np.array(gray_image)
-        
-        # 画像のデータ型を確認・修正
-        if cv_image.dtype != np.uint8:
-            cv_image = cv_image.astype(np.uint8)
-        print(f"OpenCV画像形状: {cv_image.shape}, データ型: {cv_image.dtype}")
-        
-        # ガウシアンブラーでぼかし効果
-        blurred = cv2.GaussianBlur(cv_image, (15, 15), 0)
-        
-        # エッジ保持平滑化フィルタ
-        smoothed = cv2.bilateralFilter(blurred, 9, 75, 75)
-        
-        # コントラスト調整
-        alpha = 1.2  # コントラスト
-        beta = -30   # ブライトネス
-        adjusted = cv2.convertScaleAbs(smoothed, alpha=alpha, beta=beta)
-        
-        # ノイズリダクション
-        denoised = cv2.fastNlMeansDenoising(adjusted)
-        
-        # OpenCVからPILに変換（グレースケール→RGB）
-        result_image = Image.fromarray(denoised, mode='L').convert('RGB')
-        print(f"結果画像モード: {result_image.mode}, サイズ: {result_image.size}")
-        
-        return result_image
-        
-    except Exception as e:
-        print(f"2DGS処理エラー: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"2DGS処理中にエラー: {str(e)}")
-
-def generate_gaussian_points_image(image: Image.Image) -> Image.Image:
-    """ガウシアンポイントを生成して画像に描画（修正版）"""
-    try:
-        width, height = image.size
-        
-        # 背景として薄いグレースケール画像を使用
-        gray_bg = image.convert('L').convert('RGB')
-        overlay = Image.new('RGBA', (width, height), (0, 0, 0, 0))
-        draw = ImageDraw.Draw(overlay)
-        
-        # ガウシアンポイント数をランダムに決定
-        num_points = random.randint(200, 500)
-        
-        # 画像の重要な領域を検出（OpenCVを使用）
-        gray_array = np.array(image.convert('L'))
-        
-        # データ型を確認
-        if gray_array.dtype != np.uint8:
-            gray_array = gray_array.astype(np.uint8)
-        
-        edges = cv2.Canny(gray_array, 50, 150)
-        edge_points = np.column_stack(np.where(edges > 0))
-        
-        points_generated = 0
-        
-        # エッジ周辺により多くのポイントを配置
-        for _ in range(min(num_points // 2, len(edge_points))):
-            if len(edge_points) > 0 and points_generated < num_points:
-                # エッジ近くにポイントを配置
-                edge_idx = random.randint(0, len(edge_points) - 1)
-                y, x = edge_points[edge_idx]
-                
-                # 少しランダムにオフセット
-                x += random.randint(-20, 20)
-                y += random.randint(-20, 20)
-                
-                # 画像範囲内に制限
-                x = max(0, min(width - 1, x))
-                y = max(0, min(height - 1, y))
-                
-            else:
-                # ランダムな位置
-                x = random.randint(0, width - 1)
-                y = random.randint(0, height - 1)
-            
-            # ポイントのプロパティ
-            radius = random.uniform(2, 8)
-            opacity = random.randint(50, 200)
-            
-            # カラフルなポイント（ピンク〜赤系）
-            hue = random.uniform(300, 360)  # ピンク〜マゼンタ
-            saturation = random.uniform(0.6, 1.0)
-            lightness = random.uniform(0.4, 0.8)
-            
-            # HSLをRGBに変換
-            r, g, b = colorsys.hls_to_rgb(hue/360, lightness, saturation)
-            color = (int(r*255), int(g*255), int(b*255), opacity)
-            
-            # 円を描画
-            draw.ellipse(
-                [x-radius, y-radius, x+radius, y+radius],
-                fill=color,
-                outline=None
-            )
-            points_generated += 1
-        
-        # 残りのポイントをランダムに配置
-        for _ in range(num_points - points_generated):
-            x = random.randint(0, width - 1)
-            y = random.randint(0, height - 1)
-            radius = random.uniform(1, 5)
-            opacity = random.randint(30, 150)
-            
-            # より薄い色のポイント
-            hue = random.uniform(320, 360)
-            r, g, b = colorsys.hls_to_rgb(hue/360, 0.6, 0.7)
-            color = (int(r*255), int(g*255), int(b*255), opacity)
-            
-            draw.ellipse(
-                [x-radius, y-radius, x+radius, y+radius],
-                fill=color,
-                outline=None
-            )
-        
-        # 背景と合成
-        result = Image.alpha_composite(
-            gray_bg.convert('RGBA'), 
-            overlay
-        ).convert('RGB')
-        
-        print(f"ガウシアンポイント画像完成: {result.mode}, {result.size}")
-        
-        return result
-        
-    except Exception as e:
-        print(f"ガウシアンポイント生成エラー: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"ガウシアンポイント生成エラー: {str(e)}")
+class GSParams(BaseModel):
+    num_gaussians: int = 1000
+    learning_rate: float = 0.01
+    num_steps: int = 10000
 
 @app.get("/")
 async def root():
-    return {"message": "画像処理APIサーバーが稼働中です"}
+    return {"message": "画像処理APIサーバーが稼働中です", "version": APP_VERSION}
 
 @app.get("/health")
 async def health():
     """ヘルスチェック用エンドポイント"""
-    return {"status": "healthy", "version": APP_VERSION}
+    device = "GPU" if GaussianSplatting2D().get_processer().type == "cuda" else "CPU"
+    return {
+        "status": "healthy", 
+        "version": APP_VERSION,
+        "device": device
+    }
 
-@app.post("/process/original")
-async def process_original(image: UploadFile = File(...)):
-    """オリジナル画像をグレースケール変換して返す"""
+@app.get("/device-info")
+async def device_info():
+    """デバイス情報取得"""
+    gs_temp = GaussianSplatting2D()
+    device = gs_temp.get_processer()
+    return {
+        "device": "GPU (CUDA)" if device.type == "cuda" else "CPU",
+        "device_name": str(device)
+    }
+
+@app.post("/initialize")
+async def initialize_gs(
+    image: UploadFile = File(...),
+    num_gaussians: int = 1000
+):
+    """GaussianSplatting2Dの初期化"""
+    global gs_instance
+    
     if not image.content_type.startswith('image/'):
         raise HTTPException(status_code=400, detail="画像ファイルを選択してください")
     
     try:
-        print(f"オリジナル画像処理開始: {image.filename}, {image.content_type}")
+        print(f"[Initialize] 開始: num_gaussians={num_gaussians}")
         
-        # 画像を読み込み
-        pil_image = load_image_from_upload(image)
-        print(f"画像読み込み完了: {pil_image.mode}, {pil_image.size}")
+        # GaussianSplatting2Dインスタンス作成
+        gs_instance = GaussianSplatting2D(num_gaussians=num_gaussians)
         
-        # グレースケールに変換
-        grayscale_image = pil_image.convert('L').convert('RGB')
+        # 画像を一時保存（PIL Imageとして処理）
+        pil_image = ImageManager.open_from_uploadfile(image)
         
-        # バイトストリームに変換
-        img_bytes = ImageManager.image_to_bytes(grayscale_image, "PNG")
+        # 画像をnumpy配列に変換してGSに設定
+        img_resized = pil_image.convert('L').resize((200, 250))
+        gs_instance.img_org = pil_image
+        gs_instance.img_array = np.array(img_resized).astype(np.float32) / 255.0
         
-        print("オリジナル画像処理完了、レスポンス送信")
+        # ガウシアンパラメータの初期化
+        gs_instance._init_gaussian_params()
         
-        return StreamingResponse(
-            io.BytesIO(img_bytes.read()),
-            media_type="image/png",
-            headers={"Content-Disposition": "inline; filename=original_grayscale.png"}
-        )
+        # 初期画像を生成
+        initial_images = gs_instance.generate_current_images()
         
-    except HTTPException:
-        raise
+        print(f"[Initialize] 完了")
+        
+        return {
+            "status": "initialized",
+            "num_gaussians": num_gaussians,
+            "original_image": _image_to_base64(img_resized),
+            "predicted_image": initial_images["predicted"],
+            "points_image": initial_images["points"]
+        }
+        
     except Exception as e:
-        print(f"予期しないエラー: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"オリジナル画像処理中にエラーが発生しました: {str(e)}")
+        print(f"[Initialize] エラー: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"初期化エラー: {str(e)}")
 
-@app.post("/process/2dgs")
-async def process_2dgs(image: UploadFile = File(...)):
-    """2DGS処理を実行"""
-    if not image.content_type.startswith('image/'):
-        raise HTTPException(status_code=400, detail="画像ファイルを選択してください")
+@app.post("/reinitialize")
+async def reinitialize_gs(num_gaussians: int = 1000):
+    """既存の画像でガウシアンパラメータを再初期化"""
+    global gs_instance
+    
+    if gs_instance is None or gs_instance.img_array is None:
+        raise HTTPException(status_code=400, detail="画像が読み込まれていません")
     
     try:
-        print(f"2DGS処理開始: {image.filename}, {image.content_type}")
+        print(f"[Reinitialize] 開始: num_gaussians={num_gaussians}")
         
-        # 画像を読み込み
-        pil_image = load_image_from_upload(image)
-        print(f"画像読み込み完了: {pil_image.mode}, {pil_image.size}")
+        # ガウシアン数を更新
+        gs_instance.num_gaussians = num_gaussians
         
-        # 2DGS処理を適用
-        processed_image = apply_2dgs_effect(pil_image)
+        # ガウシアンパラメータを再初期化
+        gs_instance._init_gaussian_params()
         
-        # バイトストリームに変換
-        img_bytes = ImageManager.image_to_bytes(processed_image, "PNG")
+        # 初期画像を生成
+        initial_images = gs_instance.generate_current_images()
         
-        print("2DGS処理完了、レスポンス送信")
+        print(f"[Reinitialize] 完了")
         
-        return StreamingResponse(
-            io.BytesIO(img_bytes.read()),
-            media_type="image/png",
-            headers={"Content-Disposition": "inline; filename=2dgs_processed.png"}
-        )
+        return {
+            "status": "reinitialized",
+            "num_gaussians": num_gaussians,
+            "predicted_image": initial_images["predicted"],
+            "points_image": initial_images["points"]
+        }
         
-    except HTTPException:
-        raise
     except Exception as e:
-        print(f"予期しないエラー: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"2DGS処理中にエラーが発生しました: {str(e)}")
+        print(f"[Reinitialize] エラー: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"再初期化エラー: {str(e)}")
 
-@app.post("/process/gaussian-points")
-async def process_gaussian_points(image: UploadFile = File(...)):
-    """ガウシアンポイント生成を実行"""
-    if not image.content_type.startswith('image/'):
-        raise HTTPException(status_code=400, detail="画像ファイルを選択してください")
+@app.websocket("/ws/train")
+async def websocket_train(websocket: WebSocket):
+    """WebSocketで学習実行"""
+    global gs_instance, is_processing, should_stop
+    
+    await websocket.accept()
     
     try:
-        print(f"ガウシアンポイント生成開始: {image.filename}, {image.content_type}")
+        # パラメータ受信
+        data = await websocket.receive_text()
+        params = json.loads(data)
         
-        # 画像を読み込み
-        pil_image = load_image_from_upload(image)
-        print(f"画像読み込み完了: {pil_image.mode}, {pil_image.size}")
+        learning_rate = params.get("learning_rate", 0.01)
+        num_steps = params.get("num_steps", 10000)
+        update_interval = params.get("update_interval", 100)
         
-        # ガウシアンポイント画像を生成
-        points_image = generate_gaussian_points_image(pil_image)
+        if gs_instance is None:
+            await websocket.send_json({
+                "type": "error",
+                "message": "GaussianSplattingが初期化されていません"
+            })
+            return
         
-        # バイトストリームに変換
-        img_bytes = ImageManager.image_to_bytes(points_image, "PNG")
+        is_processing = True
+        should_stop = False
         
-        print("ガウシアンポイント生成完了、レスポンス送信")
+        print(f"[Train] 開始: lr={learning_rate}, steps={num_steps}")
         
-        return StreamingResponse(
-            io.BytesIO(img_bytes.read()),
-            media_type="image/png",
-            headers={"Content-Disposition": "inline; filename=gaussian_points.png"}
+        # 学習実行
+        await gs_instance.calculate_async(
+            num_steps=num_steps,
+            opt_lr=learning_rate,
+            update_interval=update_interval,
+            websocket=websocket
         )
         
-    except HTTPException:
-        raise
+        print(f"[Train] 完了")
+        
+        await websocket.send_json({
+            "type": "complete",
+            "message": "学習が完了しました"
+        })
+        
+    except WebSocketDisconnect:
+        print("[Train] WebSocket切断")
     except Exception as e:
-        print(f"予期しないエラー: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"ガウシアンポイント生成中にエラーが発生しました: {str(e)}")
+        print(f"[Train] エラー: {str(e)}")
+        await websocket.send_json({
+            "type": "error",
+            "message": str(e)
+        })
+    finally:
+        is_processing = False
+
+@app.post("/stop")
+async def stop_training():
+    """学習中断"""
+    global gs_instance, should_stop
+    should_stop = True
+    if gs_instance:
+        gs_instance.should_stop = True
+    print("[Stop] 学習中断リクエスト")
+    return {"status": "stopping"}
+
+def _image_to_base64(image) -> str:
+    """PIL ImageまたはNumpy配列をBase64文字列に変換"""
+    if isinstance(image, np.ndarray):
+        # Numpy配列の場合
+        image = (image * 255).astype(np.uint8)
+        pil_image = Image.fromarray(image)
+    else:
+        pil_image = image
+    
+    img_bytes = ImageManager.pil_to_bytes(pil_image, "PNG")
+    import base64
+    return base64.b64encode(img_bytes.getvalue()).decode('utf-8')
 
 if __name__ == "__main__":
     import uvicorn

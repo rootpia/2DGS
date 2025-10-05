@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.optim as optim
 import time
 import os
-import ImageManager
+from ImageManager import ImageManager
 
 class GaussianSplatting2D:
   """
@@ -25,21 +25,44 @@ class GaussianSplatting2D:
     num_gaussians: 近似用のガウシアン数
     save_dir: 学習画像の保存先。Noneの場合は未保存
     """
-    self.mgr = ImageManager()
-    self.img_org = None         # 元画像(PIL image)
-    self.img_array = None       # 学習向けのGroudTruth画像(cv2)
-    self.params = None          # ガウシアン点
-    self.num_gaussians = num_gaussians   # ガウシアン点数
-
-    # デバイス設定（利用できるときはGPUにする）
-    self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    self.img_org = None           # 元画像(PIL image)
+    self.img_array = None         # 学習向けのGroudTruth画像(cv2)
+    self.num_gaussians = num_gaussians  # ガウシアン点数
+    self.params = None                  # ガウシアンパラメタ(パラメタ * num_gaussians)
+    self.device = self.get_processer()  # デバイス設定（CPU/GPU）
+    self.save_dir = self._get_save_dir(save_dir)  # 保存先ディレクトリ
     print(f"device: {self.device}")
+    print(f"save_dir: {self.save_dir}")
 
-    # 保存先ディレクトリ
-    self.save_dir = save_dir
-    if save_dir is not None:
-      localtime = time.strftime("%Y%m%d%H%M%S", time.localtime())
-      self.save_dir = os.path.join(self.save_dir, localtime)
+  def debug(self, debug_func):
+    """
+    汎用デバッグ関数
+    """
+    debug_func(self)
+
+  def get_processer(self):
+    """
+    利用可能なプロセッサー(CPU/GPU)を取得
+    """
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    return device
+
+  def _get_save_dir(self, parent_save_dir):
+    """
+    保存先ディレクトリを設定.
+    parent_save_dir: 保存先ディレクトリ。'指定ディレクトリ/日時ディレクトリ'を設定する。Noneの場合は未保存
+    """
+    target_dir = None
+    if parent_save_dir is not None:
+      if os.path.exists(parent_save_dir):
+        localtime = time.strftime("%Y%m%d%H%M%S", time.localtime())
+        target_dir = os.path.join(parent_save_dir, localtime)
+    return target_dir
+
+  def set_target_image(self, filepath:str, resize_w=_TRAIN_IMG_W, resize_h=_TRAIN_IMG_H):
+    self.img_org = ImageManager.open_from_filepath(filepath)
+    img_conv = self.img_org.convert('L').resize((resize_w, resize_h))
+    self.img_array = np.array(img_conv).astype(np.float32) / 255.0
 
   def _init_gaussian_params(self):
     """
@@ -77,11 +100,11 @@ class GaussianSplatting2D:
     gaussians = coeff * torch.exp(exponent)     # (N, H, W)
     return gaussians
 
-  def debug(self, debug_func):
+  def gen_image_gaussian_plot(self, target_img, points):
     """
-    汎用デバッグ関数
+    ガウシアン点を画像に描画
     """
-    debug_func(self)
+    return target_img   # TODO: とりあえずそのまま返す
 
   def calculate(self, num_steps = _NUM_STEPS, opt_lr = _LEARNING_RATE, is_save = True):
     """
@@ -92,6 +115,7 @@ class GaussianSplatting2D:
     """
     # 初期化
     target_img = torch.tensor(self.img_array, dtype=torch.float32, device=self.device)
+    os.makedirs(self.save_dir, exist_ok=True)
 
     # 座標グリッド作成（格納値 = [X,Y,0]. [Y,X,1])
     height, width = self.img_array.shape
@@ -106,8 +130,9 @@ class GaussianSplatting2D:
     # 初期化したガウシアン点を表示
     if is_save:
       points = self.params["means"].cpu().detach().numpy()
-      color = self.mgr.plot_point(self.img_array, np.round(points))
-      self.mgr.save_fig(os.path.join(self.save_dir, "init"))
+      img_pred_np = self.gen_image_gaussian_plot(self.img_array, np.round(points))
+      filepath = os.path.join(self.save_dir, "step000000.png")
+      cv2.imwrite(filepath, img_pred_np)
 
     # 最適化
     optimizer = optim.Adam(self.params.parameters(), lr=opt_lr)
@@ -129,13 +154,17 @@ class GaussianSplatting2D:
       if step % show_interval == 0 or step == num_steps - 1:
         message = f"Step {step+1}/{num_steps} Loss: {loss.item():.6f}"
         # 可視化
-        if is_show:
-          img_pred_np = img_pred.cpu().detach().numpy()
-          img_pred_np[img_pred_np < 0] = 0
-          img_pred_np_pt = self.result.plot_point(img_pred_np, self.params['means'].cpu().detach().numpy())
-          self.result.interactive_show(None, img_pred_np, img_pred_np_pt, message)
+        img_pred_np = img_pred.cpu().detach().numpy()
+        img_pred_np[img_pred_np < 0] = 0
+        points = self.params["means"].cpu().detach().numpy()
+        img_pred_np_pt = self.gen_image_gaussian_plot(img_pred_np, points)
 
         # 保存
-        if is_show and is_save:
+        if is_save:
           filepath = os.path.join(self.save_dir, f"step{step+1:06}")
-          self.result.save_fig(filepath)
+          cv2.imwrite(filepath, img_pred_np_pt)
+
+
+if __name__ == "__main__":
+  gs = GaussianSplatting2D()
+  gs.set_target_image("/mnt/project/testdata/02_kirara_undercoat_black-modified.png")

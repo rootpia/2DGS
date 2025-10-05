@@ -7,10 +7,13 @@ import cv2
 import io
 import random
 import colorsys
+from ImageManager import ImageManager
+from GaussianSplatting2D import GaussianSplatting2D
 
-app = FastAPI(title="画像処理API", version="1.0.0")
-
-# CORS設定（React開発サーバーからのアクセスを許可）
+# Global
+APP_VERSION = "1.0.0"
+app = FastAPI(title="2dgs_API", version=APP_VERSION)
+# CORS設定（Reactサーバからのアクセスを許可）
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "http://frontend:3000"],
@@ -18,68 +21,16 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+gs2 = None # GaussianSplatting2D()
+
 
 def load_image_from_upload(file: UploadFile) -> Image.Image:
     """アップロードファイルからPIL Imageを作成"""
-    try:
-        image_data = file.file.read()
-        image = Image.open(io.BytesIO(image_data))
-        # RGBAの場合はRGBに変換
-        if image.mode == 'RGBA':
-            image = image.convert('RGB')
-        return image
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"画像の読み込みに失敗しました: {str(e)}")
-
-def image_to_bytes(image: Image.Image, format: str = "PNG") -> io.BytesIO:
-    """PIL Imageをバイトストリームに変換"""
-    img_byte_arr = io.BytesIO()
-    image.save(img_byte_arr, format=format)
-    img_byte_arr.seek(0)
-    return img_byte_arr
-
-def pil_to_cv2(pil_image: Image.Image) -> np.ndarray:
-    """PIL ImageをOpenCV形式(numpy array)に変換"""
-    # PILからnumpy arrayに変換
-    if pil_image.mode == 'RGB':
-        # RGBからBGRに変換（OpenCVはBGR形式）
-        cv_image = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
-    elif pil_image.mode == 'L':
-        # グレースケールの場合はそのまま
-        cv_image = np.array(pil_image)
-    elif pil_image.mode == 'RGBA':
-        # RGBAからBGRAに変換
-        cv_image = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGBA2BGRA)
-    else:
-        # その他の形式はRGBに変換してからBGRに
-        rgb_image = pil_image.convert('RGB')
-        cv_image = cv2.cvtColor(np.array(rgb_image), cv2.COLOR_RGB2BGR)
-    
-    return cv_image
-
-def cv2_to_pil(cv_image: np.ndarray) -> Image.Image:
-    """OpenCV形式(numpy array)をPIL Imageに変換"""
-    if len(cv_image.shape) == 2:
-        # グレースケールの場合
-        pil_image = Image.fromarray(cv_image, mode='L')
-    elif len(cv_image.shape) == 3:
-        if cv_image.shape[2] == 3:
-            # BGRからRGBに変換
-            rgb_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
-            pil_image = Image.fromarray(rgb_image, mode='RGB')
-        elif cv_image.shape[2] == 4:
-            # BGRAからRGBAに変換
-            rgba_image = cv2.cvtColor(cv_image, cv2.COLOR_BGRA2RGBA)
-            pil_image = Image.fromarray(rgba_image, mode='RGBA')
-        else:
-            raise ValueError(f"サポートされていないチャンネル数: {cv_image.shape[2]}")
-    else:
-        raise ValueError(f"サポートされていない画像形状: {cv_image.shape}")
-    
-    return pil_image
+    image = ImageManager.open_from_uploadfile(file)
+    return image
 
 def apply_2dgs_effect(image: Image.Image) -> Image.Image:
-    """2DGS風の画像処理を適用（修正版）"""
+    """2DGS風の画像処理を適用"""
     try:
         # グレースケール変換
         gray_image = image.convert('L')
@@ -90,7 +41,6 @@ def apply_2dgs_effect(image: Image.Image) -> Image.Image:
         # 画像のデータ型を確認・修正
         if cv_image.dtype != np.uint8:
             cv_image = cv_image.astype(np.uint8)
-        
         print(f"OpenCV画像形状: {cv_image.shape}, データ型: {cv_image.dtype}")
         
         # ガウシアンブラーでぼかし効果
@@ -109,7 +59,6 @@ def apply_2dgs_effect(image: Image.Image) -> Image.Image:
         
         # OpenCVからPILに変換（グレースケール→RGB）
         result_image = Image.fromarray(denoised, mode='L').convert('RGB')
-        
         print(f"結果画像モード: {result_image.mode}, サイズ: {result_image.size}")
         
         return result_image
@@ -223,7 +172,7 @@ async def root():
 @app.get("/health")
 async def health():
     """ヘルスチェック用エンドポイント"""
-    return {"status": "healthy", "opencv_version": cv2.__version__}
+    return {"status": "healthy", "version": APP_VERSION}
 
 @app.post("/process/original")
 async def process_original(image: UploadFile = File(...)):
@@ -242,7 +191,7 @@ async def process_original(image: UploadFile = File(...)):
         grayscale_image = pil_image.convert('L').convert('RGB')
         
         # バイトストリームに変換
-        img_bytes = image_to_bytes(grayscale_image, "PNG")
+        img_bytes = ImageManager.image_to_bytes(grayscale_image, "PNG")
         
         print("オリジナル画像処理完了、レスポンス送信")
         
@@ -275,7 +224,7 @@ async def process_2dgs(image: UploadFile = File(...)):
         processed_image = apply_2dgs_effect(pil_image)
         
         # バイトストリームに変換
-        img_bytes = image_to_bytes(processed_image, "PNG")
+        img_bytes = ImageManager.image_to_bytes(processed_image, "PNG")
         
         print("2DGS処理完了、レスポンス送信")
         
@@ -308,7 +257,7 @@ async def process_gaussian_points(image: UploadFile = File(...)):
         points_image = generate_gaussian_points_image(pil_image)
         
         # バイトストリームに変換
-        img_bytes = image_to_bytes(points_image, "PNG")
+        img_bytes = ImageManager.image_to_bytes(points_image, "PNG")
         
         print("ガウシアンポイント生成完了、レスポンス送信")
         

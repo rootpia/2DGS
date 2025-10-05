@@ -1,17 +1,50 @@
 import numpy as np
 from PIL import Image
 import cv2
-import io
+import io, os
+from fastapi import UploadFile, HTTPException
 
 class ImageManager:
     """
     画像変換関係のユーティリティクラス
     """
     @staticmethod
-    def image_to_bytes(image: Image.Image, format: str = "PNG") -> io.BytesIO:
+    def open_from_filepath(filepath: str) -> Image:
+        """ファイルパスからPIL Imageを開く"""
+        try:
+            image = Image.open(filepath)
+            return image
+        except Exception as e:
+            raise e
+
+    @staticmethod
+    def open_from_uploadfile(file: UploadFile) -> Image:
+    """アップロードファイルからPIL Imageを作成"""
+    try:
+        image_data = file.file.read()
+        image = Image.open(io.BytesIO(image_data))
+        if image.mode == 'RGBA':
+            image = image.convert('RGB')
+        return image
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"画像の読み込みに失敗しました: {str(e)}")
+
+    @staticmethod
+    def pil_to_bytes(image: Image.Image, format: str = "PNG") -> io.BytesIO:
         """PIL Imageをバイトストリームに変換"""
         img_byte_arr = io.BytesIO()
         image.save(img_byte_arr, format=format)
+        img_byte_arr.seek(0)
+        return img_byte_arr
+
+    @staticmethod
+    def cv2_to_bytes(image: np.ndarray, format: str = "PNG") -> io.BytesIO:
+        """OpenCV形式(numpy array)をバイトストリームに変換"""
+        ret, encoded_image = cv2.imencode(f".{format}", image)
+        if not ret:
+            raise IOError(f"Failed to encode image to {format} format.")
+        img_byte_arr = io.BytesIO()
+        img_byte_arr.write(encoded_image.tobytes())
         img_byte_arr.seek(0)
         return img_byte_arr
 
@@ -58,23 +91,31 @@ class ImageManager:
         return pil_image
 
 if __name__ == "__main__":
-    img = Image.open("../../testdata/02_kirara_undercoat_black-modified.png").convert("L")
-    print(img.mode)
-    print(img.size)
-    cv_img = ImageManager.pil_to_cv2(img)
+    pil_img = ImageManager.open_from_filepath("____unknown_path____")
+    print(pil_img)
+
+    pil_img = ImageManager.open_from_filepath("/mnt/project/testdata/02_kirara_undercoat_black-modified.png")
+    pil_gray = pil_img.convert("L")
+    print(pil_gray.mode)
+    print(pil_gray.size)
+    cv_img = ImageManager.pil_to_cv2(pil_gray)
     print(cv_img.shape)
-    pil_img = ImageManager.cv2_to_pil(cv_img)
-    print(pil_img.mode)
-    img_bytes = ImageManager.image_to_bytes(pil_img, "PNG")
-    print(img_bytes.getvalue()) 
+    pil_gray = ImageManager.cv2_to_pil(cv_img)
+    print(pil_gray.mode)
+    cv2_bytes = ImageManager.cv2_to_bytes(cv_img, "PNG")
+    print(cv2_bytes.getvalue()) 
+    pil_bytes = ImageManager.pil_to_bytes(pil_gray, "PNG")
+    print(pil_bytes.getvalue()) 
 
     #---------------
-    img = Image.open("../../testdata/02_kirara_undercoat_black-modified.png").convert("RGB")
-    print(img.mode)
-    print(img.size)
-    cv_img = ImageManager.pil_to_cv2(img)
+    pil_color = pil_img.convert("RGB")
+    print(pil_color.mode)
+    print(pil_color.size)
+    cv_img = ImageManager.pil_to_cv2(pil_color)
     print(cv_img.shape)
-    pil_img = ImageManager.cv2_to_pil(cv_img)
-    print(pil_img.mode)
-    img_bytes = ImageManager.image_to_bytes(pil_img, "PNG")
-    print(img_bytes.getvalue()) 
+    pil_color = ImageManager.cv2_to_pil(cv_img)
+    print(pil_color.mode)
+    cv2_bytes = ImageManager.cv2_to_bytes(cv_img, "PNG")
+    print(cv2_bytes.getvalue()) 
+    pil_bytes = ImageManager.pil_to_bytes(pil_color, "PNG")
+    print(pil_bytes.getvalue()) 

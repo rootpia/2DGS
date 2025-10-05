@@ -6,7 +6,7 @@ const ImageProcessingApp = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [processedImage2DGS, setProcessedImage2DGS] = useState(null);
   const [gaussianPoints, setGaussianPoints] = useState(null);
-  const [processingStage, setProcessingStage] = useState(0); // 0: 待機, 1: オリジナル処理中, 2: 2DGS処理中, 3: ガウシアンポイント生成中, 4: 完了
+  const [processingStage, setProcessingStage] = useState(0); // 0: 待機, 1: オリジナル処理中, 2: 2DGS&ガウシアンポイント処理中, 3: 完了
   const [currentFile, setCurrentFile] = useState(null);
   const fileInputRef = useRef(null);
 
@@ -99,15 +99,16 @@ const ImageProcessingApp = () => {
       setOriginalImage(processedOriginal);
       setProcessingStage(2);
 
-      // 2. 2DGS処理をPythonバックエンドに送信
-      const processed2DGS = await process2DGS(file);
-      setProcessedImage2DGS(processed2DGS);
-      setProcessingStage(3);
+      // 2. 2DGS処理とガウシアンポイント生成を並列実行
+      const [processed2DGS, gaussianImage] = await Promise.all([
+        process2DGS(file),
+        generateGaussianPointsImage(file)
+      ]);
 
-      // 3. ガウシアンポイント生成をPythonバックエンドに送信
-      const gaussianImage = await generateGaussianPointsImage(file);
+      // 両方の結果を一気に設定
+      setProcessedImage2DGS(processed2DGS);
       setGaussianPoints(gaussianImage);
-      setProcessingStage(4);
+      setProcessingStage(3);
       setIsProcessing(false);
 
     } catch (error) {
@@ -126,9 +127,8 @@ const ImageProcessingApp = () => {
     switch(stage) {
       case 0: return '待機中';
       case 1: return 'オリジナル画像処理中...';
-      case 2: return '2DGS処理中...';
-      case 3: return 'ガウシアンポイント生成中...';
-      case 4: return '処理完了';
+      case 2: return '2DGS処理 & ガウシアンポイント生成中...';
+      case 3: return '処理完了';
       default: return '不明';
     }
   };
@@ -136,10 +136,9 @@ const ImageProcessingApp = () => {
   const getProgressPercentage = (stage) => {
     switch(stage) {
       case 0: return 0;
-      case 1: return 25;
-      case 2: return 50;
-      case 3: return 75;
-      case 4: return 100;
+      case 1: return 33;
+      case 2: return 66;
+      case 3: return 100;
       default: return 0;
     }
   };
@@ -275,7 +274,7 @@ const ImageProcessingApp = () => {
                   alt="Gaussian Points" 
                   className="max-w-full max-h-full object-contain"
                 />
-              ) : processingStage === 3 ? (
+              ) : processingStage === 2 ? (
                 <div className="text-center">
                   <Loader2 className="w-8 h-8 text-pink-500 animate-spin mx-auto mb-2" />
                   <p className="text-gray-600">Pythonでガウシアンポイント生成中...</p>
@@ -290,19 +289,19 @@ const ImageProcessingApp = () => {
             <div className="mt-4">
               <div className="flex justify-between text-sm text-gray-600 mb-1">
                 <span>ガウシアンポイント生成 (Python)</span>
-                <span>{processingStage >= 4 ? '100%' : processingStage === 3 ? '処理中...' : '0%'}</span>
+                <span>{processingStage >= 3 ? '100%' : processingStage === 2 ? '処理中...' : '0%'}</span>
               </div>
               <div className="w-full bg-gray-200 rounded-full h-2">
                 <div 
                   className={`h-2 rounded-full transition-all duration-500 ${
-                    processingStage >= 4 ? 'bg-green-500 w-full' : 
-                    processingStage === 3 ? 'bg-pink-500 w-2/3 animate-pulse' : 'bg-gray-300 w-0'
+                    processingStage >= 3 ? 'bg-green-500 w-full' : 
+                    processingStage === 2 ? 'bg-pink-500 w-2/3 animate-pulse' : 'bg-gray-300 w-0'
                   }`}
                 ></div>
               </div>
             </div>
             
-            {processingStage >= 4 && (
+            {processingStage >= 3 && (
               <div className="mt-3 text-sm text-gray-600">
                 全Python処理完了
               </div>
@@ -339,15 +338,15 @@ const ImageProcessingApp = () => {
               </div>
               <div className={`flex items-center gap-3 ${processingStage >= 2 ? 'text-blue-600' : 'text-gray-400'}`}>
                 <div className={`w-4 h-4 rounded-full ${processingStage >= 3 ? 'bg-green-500' : processingStage === 2 ? 'bg-blue-500 animate-pulse' : 'bg-gray-300'}`}></div>
-                <span>Python: 2DGS最適化処理 → http://localhost:18000/process/2dgs</span>
+                <span>Python: 2DGS最適化処理 (並列実行) → http://localhost:18000/process/2dgs</span>
               </div>
-              <div className={`flex items-center gap-3 ${processingStage >= 3 ? 'text-pink-600' : 'text-gray-400'}`}>
-                <div className={`w-4 h-4 rounded-full ${processingStage >= 4 ? 'bg-green-500' : processingStage === 3 ? 'bg-pink-500 animate-pulse' : 'bg-gray-300'}`}></div>
-                <span>Python: ガウシアンポイント生成 → http://localhost:18000/process/gaussian-points</span>
+              <div className={`flex items-center gap-3 ${processingStage >= 2 ? 'text-pink-600' : 'text-gray-400'}`}>
+                <div className={`w-4 h-4 rounded-full ${processingStage >= 3 ? 'bg-green-500' : processingStage === 2 ? 'bg-pink-500 animate-pulse' : 'bg-gray-300'}`}></div>
+                <span>Python: ガウシアンポイント生成 (並列実行) → http://localhost:18000/process/gaussian-points</span>
               </div>
-              <div className={`flex items-center gap-3 ${processingStage >= 4 ? 'text-green-600' : 'text-gray-400'}`}>
-                <div className={`w-4 h-4 rounded-full ${processingStage >= 4 ? 'bg-green-500' : 'bg-gray-300'}`}></div>
-                <span>全処理完了</span>
+              <div className={`flex items-center gap-3 ${processingStage >= 3 ? 'text-green-600' : 'text-gray-400'}`}>
+                <div className={`w-4 h-4 rounded-full ${processingStage >= 3 ? 'bg-green-500' : 'bg-gray-300'}`}></div>
+                <span>全処理完了 - 中央と右の画像が同時に表示</span>
               </div>
             </div>
             
@@ -358,6 +357,7 @@ const ImageProcessingApp = () => {
                 <div>🔗 バックエンドURL: http://localhost:18000</div>
                 <div>📡 通信方式: HTTP POST (multipart/form-data)</div>
                 <div>🐍 Python処理: FastAPI + OpenCV + PIL</div>
+                <div>⚡ 並列処理: 2DGS & ガウシアンポイント同時実行</div>
                 <div>📊 処理段階: {currentFile ? `${currentFile.name} を処理中` : 'ファイル待機中'}</div>
               </div>
             </div>
@@ -376,7 +376,7 @@ const ImageProcessingApp = () => {
                 <div>POST http://localhost:18000/process/2dgs - 2DGS処理</div>
                 <div>POST http://localhost:18000/process/gaussian-points - ガウシアンポイント生成</div>
               </div>
-              <p>画像をアップロードすると、全ての処理がPythonバックエンドで実行されます。</p>
+              <p>画像をアップロードすると、2DGS処理とガウシアンポイント生成が並列実行され、真ん中と右の画像が一気に表示されます。</p>
             </div>
           </div>
         )}

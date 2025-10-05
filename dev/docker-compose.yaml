@@ -1,0 +1,17 @@
+services:
+  # 開発用環境
+  2dgs_backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: gsapp_back
+    volumes:
+      - ../:/mnt/project
+    environment:
+      - PYTHONPATH=/app
+    networks:
+      - dev-network
+
+networks:
+  dev-network:
+    driver: bridge

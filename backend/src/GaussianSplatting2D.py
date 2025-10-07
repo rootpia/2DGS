@@ -3,7 +3,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import time, os, base64, io
+import time, os, io
 import cv2
 from ImageManager import ImageManager
 
@@ -42,7 +42,7 @@ class GaussianSplatting2D:
                 target_dir = os.path.join(parent_save_dir, localtime)
         return target_dir
 
-    def _init_gaussian_params_old(self):
+    def _init_gaussian_params_only_variance(self):
         """ガウシアン点の初期化（全部ランダム）"""
         torch.manual_seed(GaussianSplatting2D._RAND_SEED)
         height, width = self.img_array.shape
@@ -55,7 +55,7 @@ class GaussianSplatting2D:
             'weights': nn.Parameter(torch.rand(num_gaussians, dtype=torch.float32, device=self.device) * 0.5 + 0.5)
         })
 
-    def _gaussian_2d_batch_old(self, pos, means, sigmas):
+    def _gaussian_2d_batch_only_variance(self, pos, means, sigmas):
         """各点群からガウシアンを一括計算"""
         pos_exp = pos.unsqueeze(0)
         means_exp = means[:, None, None, :]
@@ -192,28 +192,13 @@ class GaussianSplatting2D:
         img_with_points = self._plot_gaussian_points(img_pred_np, points)
 
         # Base64エンコード
-        predicted_b64 = self._numpy_to_base64(img_pred_np)
-        points_b64 = self._numpy_to_base64(img_with_points)
+        predicted_b64 = ImageManager.cv2_to_base64(img_pred_np)
+        points_b64 = ImageManager.cv2_to_base64(img_with_points)
 
         return {
             "predicted": predicted_b64,
             "points": points_b64
         }
-
-    def _numpy_to_base64(self, img_array):
-        """Numpy配列をBase64文字列に変換"""
-        if img_array.max() <= 1.0:
-            img_uint8 = (img_array * 255).astype(np.uint8)
-        else:
-            img_uint8 = img_array.astype(np.uint8)
-        
-        if len(img_array.shape) == 2:
-            pil_img = Image.fromarray(img_uint8, mode='L')
-        else:
-            pil_img = Image.fromarray(img_uint8, mode='RGB')
-        
-        img_bytes = ImageManager.pil_to_bytes(pil_img, "PNG")
-        return base64.b64encode(img_bytes.getvalue()).decode('utf-8')
 
     async def calculate_async(self, num_steps=_NUM_STEPS, opt_lr=_LEARNING_RATE, 
                              update_interval=100, websocket=None):

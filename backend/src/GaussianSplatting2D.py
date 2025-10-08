@@ -43,7 +43,7 @@ class GaussianSplatting2D:
         return target_dir
 
     def _init_gaussian_params_only_variance(self):
-        """ガウシアン点の初期化（全部ランダム）"""
+        """ガウシアン点の初期化（共分散を除外）"""
         torch.manual_seed(GaussianSplatting2D._RAND_SEED)
         height, width = self.img_array.shape
         num_gaussians = self.num_gaussians
@@ -56,7 +56,7 @@ class GaussianSplatting2D:
         })
 
     def _gaussian_2d_batch_only_variance(self, pos, means, sigmas):
-        """各点群からガウシアンを一括計算"""
+        """各点群からガウシアンを一括計算（共分散を除外）"""
         pos_exp = pos.unsqueeze(0)
         means_exp = means[:, None, None, :]
         sigmas_exp = sigmas[:, None, None, :]

@@ -159,8 +159,11 @@ async def websocket_train(websocket: WebSocket):
             })
             return
         
+        # フラグをリセット
         is_processing = True
         should_stop = False
+        if gs_instance:
+            gs_instance.should_stop = False
         
         print(f"[Train] 開始: lr={learning_rate}, steps={num_steps}")
         
@@ -189,6 +192,9 @@ async def websocket_train(websocket: WebSocket):
         })
     finally:
         is_processing = False
+        should_stop = False
+        if gs_instance:
+            gs_instance.should_stop = False
 
 @app.post("/stop")
 async def stop_training():

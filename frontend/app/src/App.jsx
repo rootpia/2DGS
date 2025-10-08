@@ -31,9 +31,11 @@ const ImageProcessingApp = () => {
       .catch(err => console.error('デバイス情報取得エラー:', err));
   }, []);
 
-  // ログ自動スクロール
+  // ログ自動スクロール - 処理ログ内のみでスクロール
   useEffect(() => {
-    logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (logsEndRef.current) {
+      logsEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
   }, [logs]);
 
   const addLog = (message) => {
@@ -193,9 +195,7 @@ const ImageProcessingApp = () => {
 
     ws.onclose = () => {
       addLog('WebSocket接続終了');
-      if (appState === 'training') {
-        setAppState('paused');
-      }
+      // WebSocket切断時は状態を変更しない（学習完了/中断で既に変更済み）
     };
   };
 
@@ -429,7 +429,7 @@ const ImageProcessingApp = () => {
                 disabled={appState === 'training'}
               >
                 <RefreshCw className="w-4 h-4" />
-                パラメータを適用して再初期化
+                再初期化
               </button>
             )}
 

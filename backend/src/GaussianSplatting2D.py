@@ -5,6 +5,7 @@ import torch.nn as nn
 import torch.optim as optim
 import time, os, io
 import cv2
+from torch.distributions import MultivariateNormal
 from ImageManager import ImageManager
 
 class GaussianSplatting2D:
@@ -87,55 +88,99 @@ class GaussianSplatting2D:
         })
 
     def _gaussian_2d_batch(self, pos, means, sigmas):
-      """
-      各点群からガウシアンを一括計算（共分散行列対応版）
-      pos: 座標テンソル (H, W, 2)
-      means: ガウシアン中心 (N, 2)
-      sigmas: 共分散行列要素 (N, 3) [sigma_x, sigma_y, sigma_xy]
-      """
-      N = means.shape[0]
-      H, W = pos.shape[0], pos.shape[1]
+        """
+        各点群からガウシアンを一括計算（共分散行列対応版）
+        pos: 座標テンソル (H, W, 2) - 評価したい点
+        means: ガウシアン中心 (N, 2) - N個のガウシアンの中心
+        sigmas: 共分散行列要素 (N, 3) [sigma_x, sigma_y, sigma_xy]
+        
+        戻り値: (N, H, W) - 各ガウシアンと各座標のPDF値
+        """
+        N = means.shape[0]
+        H, W = pos.shape[0], pos.shape[1]
+        device = pos.device
 
-      # 一括計算するために、posを (1, H, W, 2) , means, sigmasを (N, 1, 1, 2/3) に拡張して計算
-      pos_exp = pos.unsqueeze(0)                    # (1, H, W, 2)
-      means_exp = means[:, None, None, :]           # (N, 1, 1, 2)
+        #------------------------------------
+        # 1. 共分散行列の構築 (N, 2, 2)
+        sigma_x_sq = sigmas[:, 0].square()
+        sigma_y_sq = sigmas[:, 1].square() 
+        sigma_xy = sigmas[:, 2]
 
-      # 共分散行列要素を抽出 - 形状を明示的に制御
-      sigma_x = sigmas[:, 0].view(N, 1, 1)          # (N, 1, 1)
-      sigma_y = sigmas[:, 1].view(N, 1, 1)          # (N, 1, 1)
-      sigma_xy = sigmas[:, 2].view(N, 1, 1)         # (N, 1, 1)
+        # 正定値性の保証 (C_xy < sqrt(sigma_x^2 * sigma_y^2))
+        threshold = (sigma_x_sq * sigma_y_sq).sqrt() 
+        sigma_xy = torch.min(torch.max(sigma_xy, -threshold), threshold)
 
-      # 中心からの差分
-      diff = pos_exp - means_exp                    # (N, H, W, 2)
-      dx = diff[:, :, :, 0]                         # (N, H, W)
-      dy = diff[:, :, :, 1]                         # (N, H, W)
+        # 分散共分散行列を作成 (N, 2, 2)
+        cov_matrices = torch.zeros((N, 2, 2), dtype=pos.dtype, device=device)
+        cov_matrices[:, 0, 0] = sigma_x_sq
+        cov_matrices[:, 1, 1] = sigma_y_sq
+        cov_matrices[:, 0, 1] = sigma_xy
+        cov_matrices[:, 1, 0] = sigma_xy
+        
+        #------------------------------------
+        # 2. 評価点のテンソル形状調整
+        pos_eval = pos.reshape(-1, 2).unsqueeze(1)    # (H, W, 2)
+        pos_eval_batch = pos_eval.expand(-1, N, -1)   # (H*W, N, 2)
 
-      # 共分散行列の逆行列要素を計算
-      # Σ = [[σx², σxy], [σxy, σy²]]
-      # det(Σ) = σx² * σy² - σxy²
-      det = sigma_x**2 * sigma_y**2 - sigma_xy**2   # (N, 1, 1)
+        #------------------------------------
+        # 3. ガウシアン計算
+        m = MultivariateNormal(loc=means, covariance_matrix=cov_matrices)
+        log_gaussians = m.log_prob(pos_eval_batch)          # (N, H*W)
+        gaussians = torch.exp(log_gaussians.permute(1, 0))  # (N, H*W)
+        gaussians = gaussians.view(N, H, W) 
+        
+        return gaussians
 
-      # 数値安定性のためにdetに小さな値を加算
-      det = det + 1e-6
+    def _gaussian_2d_batch2(self, pos, means, sigmas):
+        """
+        各点群からガウシアンを一括計算（共分散行列対応版）
+        pos: 座標テンソル (H, W, 2)
+        means: ガウシアン中心 (N, 2)
+        sigmas: 共分散行列要素 (N, 3) [sigma_x, sigma_y, sigma_xy]
+        """
+        N = means.shape[0]
+        H, W = pos.shape[0], pos.shape[1]
 
-      # 逆行列要素
-      inv_sigma_xx = sigma_y**2 / det               # (N, 1, 1)
-      inv_sigma_yy = sigma_x**2 / det               # (N, 1, 1)
-      inv_sigma_xy = -sigma_xy / det                # (N, 1, 1)
+        # 一括計算するために、posを (1, H, W, 2) , means, sigmasを (N, 1, 1, 2/3) に拡張して計算
+        pos_exp = pos.unsqueeze(0)                    # (1, H, W, 2)
+        means_exp = means[:, None, None, :]           # (N, 1, 1, 2)
 
-      # マハラノビス距離の二乗を計算
-      # (x-μ)ᵀ Σ⁻¹ (x-μ) = dx²*inv_σxx + 2*dx*dy*inv_σxy + dy²*inv_σyy
-      mahalanobis_sq = (
-          dx**2 * inv_sigma_xx +
-          2 * dx * dy * inv_sigma_xy +
-          dy**2 * inv_sigma_yy
-      )  # (N, H, W)
+        # 共分散行列要素を抽出 - 形状を明示的に制御
+        sigma_x = sigmas[:, 0].view(N, 1, 1)          # (N, 1, 1)
+        sigma_y = sigmas[:, 1].view(N, 1, 1)          # (N, 1, 1)
+        sigma_xy = sigmas[:, 2].view(N, 1, 1)         # (N, 1, 1)
 
-      # ガウシアン関数
-      # 1/(2π√det) * exp(-0.5 * mahalanobis_sq)
-      coeff = 1 / (2 * torch.pi * torch.sqrt(det))  # (N, 1, 1)
-      gaussians = coeff * torch.exp(-0.5 * mahalanobis_sq)      # (N, H, W)
-      return gaussians
+        # 中心からの差分
+        diff = pos_exp - means_exp                    # (N, H, W, 2)
+        dx = diff[:, :, :, 0]                         # (N, H, W)
+        dy = diff[:, :, :, 1]                         # (N, H, W)
+
+        # 共分散行列の逆行列要素を計算
+        # Σ = [[σx², σxy], [σxy, σy²]]
+        # det(Σ) = σx² * σy² - σxy²
+        det = sigma_x**2 * sigma_y**2 - sigma_xy**2   # (N, 1, 1)
+
+        # 数値安定性のためにdetに小さな値を加算
+        det = det + 1e-6
+
+        # 逆行列要素
+        inv_sigma_xx = sigma_y**2 / det               # (N, 1, 1)
+        inv_sigma_yy = sigma_x**2 / det               # (N, 1, 1)
+        inv_sigma_xy = -sigma_xy / det                # (N, 1, 1)
+
+        # マハラノビス距離の二乗を計算
+        # (x-μ)ᵀ Σ⁻¹ (x-μ) = dx²*inv_σxx + 2*dx*dy*inv_σxy + dy²*inv_σyy
+        mahalanobis_sq = (
+            dx**2 * inv_sigma_xx +
+            2 * dx * dy * inv_sigma_xy +
+            dy**2 * inv_sigma_yy
+        )  # (N, H, W)
+
+        # ガウシアン関数
+        # 1/(2π√det) * exp(-0.5 * mahalanobis_sq)
+        coeff = 1 / (2 * torch.pi * torch.sqrt(det))  # (N, 1, 1)
+        gaussians = coeff * torch.exp(-0.5 * mahalanobis_sq)      # (N, H, W)
+        return gaussians
 
     def _generate_predicted_image(self, pos):
         """予測画像を生成"""

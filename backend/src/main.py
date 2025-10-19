@@ -41,7 +41,9 @@ async def root():
 @app.get("/health")
 async def health():
     """ヘルスチェック用エンドポイント"""
-    device = "GPU" if GaussianSplatting2D().get_processer().type == "cuda" else "CPU"
+    global gs_instance
+    gs_tmp = gs_instance if gs_instance is not None else GaussianSplatting2D()
+    device = "GPU" if gs_tmp.get_processer().type == "cuda" else "CPU"
     return {
         "status": "healthy", 
         "version": APP_VERSION,
@@ -51,10 +53,11 @@ async def health():
 @app.get("/device-info")
 async def device_info():
     """デバイス情報取得"""
-    gs_temp = GaussianSplatting2D()
-    device = gs_temp.get_processer()
+    global gs_instance
+    gs_tmp = gs_instance if gs_instance is not None else GaussianSplatting2D()
+    device = gs_tmp.get_processer()
     return {
-        "device": "GPU (CUDA)" if device.type == "cuda" else "CPU",
+        "device": "GPU" if device.type == "cuda" else "CPU",
         "device_name": str(device)
     }
 
@@ -72,21 +75,10 @@ async def initialize_gs(
     try:
         print(f"[Initialize] 開始: num_gaussians={num_gaussians}")
         
-        # GaussianSplatting2Dインスタンス作成
-        gs_instance = GaussianSplatting2D(num_gaussians=num_gaussians)
-        
-        # 画像を一時保存（PIL Imageとして処理）
+        # 画像を読み込み＋GaussianSplatting2Dインスタンス初期化
         pil_image = ImageManager.open_from_uploadfile(image)
-        
-        # 画像をnumpy配列に変換してGSに設定
-        img_resized = pil_image.convert('L').resize((200, 250))
-        gs_instance.img_org = pil_image
-        gs_instance.img_array = np.array(img_resized).astype(np.float32) / 255.0
-        
-        # ガウシアンパラメータの初期化
-        gs_instance._init_gaussian_params()
-        
-        # 初期画像を生成
+        gs_instance = GaussianSplatting2D()
+        gs_instance.initialize(pil_image, num_gaussians=num_gaussians)
         initial_images = gs_instance.generate_current_images()
         
         print(f"[Initialize] 完了")
@@ -94,7 +86,7 @@ async def initialize_gs(
         return {
             "status": "initialized",
             "num_gaussians": num_gaussians,
-            "original_image": _image_to_base64(img_resized),
+            "original_image": _image_to_base64(gs_instance.img_org),
             "predicted_image": initial_images["predicted"],
             "points_image": initial_images["points"]
         }
@@ -113,16 +105,8 @@ async def reinitialize_gs(num_gaussians: int = 1000):
     
     try:
         print(f"[Reinitialize] 開始: num_gaussians={num_gaussians}")
-        
-        # ガウシアン数を更新
-        gs_instance.num_gaussians = num_gaussians
-        
-        # ガウシアンパラメータを再初期化
-        gs_instance._init_gaussian_params()
-        
-        # 初期画像を生成
+        gs_instance.create_gaussian_params(num_gaussians)
         initial_images = gs_instance.generate_current_images()
-        
         print(f"[Reinitialize] 完了")
         
         return {

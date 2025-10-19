@@ -1,41 +1,65 @@
-from PIL import Image, ImageDraw
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import time, os, io
 import cv2
+import asyncio
+from PIL import Image
 from torch.distributions import MultivariateNormal
 from ImageManager import ImageManager
 
 class GaussianSplatting2D:
     """2DGSによる画像近似"""
-    _TRAIN_IMG_W = 200
-    _TRAIN_IMG_H = 250
-    _NUM_GAUSSIANS = 1000
-    _RAND_SEED = 0
-    _NUM_STEPS = 10000
-    _LEARNING_RATE = 0.01
+    _TRAIN_IMG_W = 200      # デフォルト値：処理対象画像の幅
+    _TRAIN_IMG_H = 250      # デフォルト値：処理対象画像の高さ
+    _NUM_GAUSSIANS = 1000   # デフォルト値：ガウシアン点の数
+    _RAND_SEED = 0          # デフォルト値：乱数シード
+    _NUM_STEPS = 10000      # デフォルト値：学習ステップ数
+    _LEARNING_RATE = 0.01   # デフォルト値：学習率
 
-    def __init__(self, num_gaussians=_NUM_GAUSSIANS, save_dir=None):
-        """コンストラクタ"""
-        self.img_org = None
-        self.img_array = None
-        self.num_gaussians = num_gaussians
-        self.params = None
+    def __init__(self, save_dir:str=None):
+        """
+        コンストラクタ
+        save_dir: 保存先の親ディレクトリ
+        """
+        self.num_gaussians = 0
+        self.img_org = None         # オリジナル画像(pil image, リサイズ後)
+        self.img_array = None       # GT画像
+        self.pos_for_kernel = None  # ガウシアンカーネル計算用の座標配列
+        self.params = None          # ガウシアンパラメタ
         self.device = self.get_processer()
         self.save_dir = self._get_save_dir(save_dir)
         self.should_stop = False
         print(f"device: {self.device}")
         print(f"save_dir: {self.save_dir}")
 
-    def get_processer(self):
+    def initialize(self, input_image:Image, resize_w:int=_TRAIN_IMG_W, resize_h:int=_TRAIN_IMG_H,
+                         num_gaussians:int=_NUM_GAUSSIANS):
+        """
+        初期化処理
+        input_image: 入力画像。指定サイズにリサイズされる
+        resize_w: リサイズ後の画像幅
+        resize_h: リサイズ後の画像高さ
+        num_gaussians: ガウシアン点の数
+        """
+        self.num_gaussians = num_gaussians
+        self.img_org = input_image.convert('L').resize((resize_w, resize_h))
+        self.img_array = np.array(self.img_org).astype(np.float32) / 255.0
+        # self.create_gaussian_params_only_variance(num_gaussians)
+        self.create_gaussian_params(num_gaussians)
+
+    def get_processer(self) -> torch.device:
         """利用可能なプロセッサー(CPU/GPU)を取得"""
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         return device
 
-    def _get_save_dir(self, parent_save_dir):
-        """保存先ディレクトリを設定"""
+    def _get_save_dir(self, parent_save_dir:str) -> str:
+        """
+        保存先ディレクトリを取得
+        parent_save_dir: 保存先の親ディレクトリ
+        return: 保存先ディレクトリ。[親ディレクトリパス/日付ディレクトリ]を返す
+        """
         target_dir = None
         if parent_save_dir is not None:
             if os.path.exists(parent_save_dir):
@@ -43,12 +67,35 @@ class GaussianSplatting2D:
                 target_dir = os.path.join(parent_save_dir, localtime)
         return target_dir
 
-    def _init_gaussian_params_only_variance(self):
-        """ガウシアン点の初期化（共分散を除外）"""
+    #---------- ①共分散なしパターン [START] ------------
+    def _create_pos_for_kernel_only_variance(self) -> torch.Tensor:
+        """
+        画像フィルタ(カーネル)計算用の座標配列を作成
+        note:
+          画像と同サイズのカーネルを作成し、
+          ガウシアンカーネルを計算するときの要領で、ガウシアンを画像に描画する。
+        return: 画像と同サイズのカーネル
+        """
+        height, width = self.img_array.shape
+        x = torch.linspace(0, width - 1, width, device=self.device)
+        y = torch.linspace(0, height - 1, height, device=self.device)
+        X, Y = torch.meshgrid(x, y, indexing='xy')
+        XY = torch.stack([X, Y], dim=-1)
+        
+        # 共分散なしパターン用に整形
+        XY_reshape = XY.unsqueeze(0)
+        return XY_reshape
+
+    def create_gaussian_params_only_variance(self, num_gaussians:int):
+        """
+        ガウシアン点の初期化（共分散を除外）
+        num_gaussians: ガウシアン点数
+        """
+        self.num_gaussians = num_gaussians
         torch.manual_seed(GaussianSplatting2D._RAND_SEED)
         height, width = self.img_array.shape
-        num_gaussians = self.num_gaussians
 
+        # ガウシアンパラメタの初期化（位置x,y、分散s_x, s_y、重みw）
         self.params = nn.ParameterDict({
             'means': nn.Parameter(torch.rand(num_gaussians, 2, dtype=torch.float32, device=self.device) * \
                                   torch.tensor([width, height], dtype=torch.float32, device=self.device)),
@@ -56,27 +103,59 @@ class GaussianSplatting2D:
             'weights': nn.Parameter(torch.rand(num_gaussians, dtype=torch.float32, device=self.device) * 0.5 + 0.5)
         })
 
-    def _gaussian_2d_batch_only_variance(self, pos, means, sigmas):
-        """各点群からガウシアンを一括計算（共分散を除外）"""
-        pos_exp = pos.unsqueeze(0)
+        # 計算用座標配列も初期化
+        self.pos_for_kernel = self._create_pos_for_kernel_only_variance()
+
+    def _gaussian_2d_batch_only_variance(self, means:torch.nn.parameter.Parameter, sigmas:torch.nn.parameter.Parameter) -> torch.Tensor:
+        """
+        ガウシアンを一括計算（共分散を除外）
+        means: ガウウシアン中心 (N, 2)
+        sigmas: 分散共分散行列の要素 (N, 2) [sigma_x, sigma_y]
+        return: ガウシアン (N, H, W)
+        """
         means_exp = means[:, None, None, :]
         sigmas_exp = sigmas[:, None, None, :]
 
-        diff = pos_exp - means_exp
+        diff = self.pos_for_kernel - means_exp
         denom = 2 * sigmas_exp.pow(2)
         exponent = - (diff[:, :, :, 0] ** 2 / denom[:, :, :, 0] + diff[:, :, :, 1] ** 2 / denom[:, :, :, 1])
         coeff = 1 / (2 * torch.pi * sigmas_exp[:, :, :, 0] * sigmas_exp[:, :, :, 1])
 
         gaussians = coeff * torch.exp(exponent)
         return gaussians
+    #---------- ①共分散なしパターン [END] --------------
 
-    def _init_gaussian_params(self):
-        """ガウシアン点の初期化（全部ランダム）"""
+    #---------- ②共分散ありパターン [START] ------------
+    def _create_pos_for_kernel(self) -> torch.Tensor:
+        """
+        画像フィルタ(カーネル)計算用の座標配列を作成。
+        note:
+          画像と同サイズのカーネルを作成し、
+          ガウシアンカーネルを計算するときの要領で、ガウシアンを画像に描画する。
+        return: 画像と同サイズのカーネル
+        """
+        height, width = self.img_array.shape
+        x = torch.linspace(0, width - 1, width, device=self.device)
+        y = torch.linspace(0, height - 1, height, device=self.device)
+        X, Y = torch.meshgrid(x, y, indexing='xy')
+        XY = torch.stack([X, Y], dim=-1)
+        
+        # 共分散ありパターン用に整形
+        XY_reshape = XY.reshape(-1, 2).unsqueeze(1)                # (H, W, 2)
+        XY_expand = XY_reshape.expand(-1, self.num_gaussians, -1)  # (H*W, N, 2)
+
+        return XY_expand
+
+    def create_gaussian_params(self, num_gaussians:int):
+        """
+        ガウシアン点の初期化（共分散あり）
+        num_gaussians: ガウシアン点数
+        """
+        self.num_gaussians = num_gaussians
         torch.manual_seed(GaussianSplatting2D._RAND_SEED)
         height, width = self.img_array.shape
-        num_gaussians = self.num_gaussians
 
-        # Gaussianパラメタの初期化（位置x,y、分散共分散s_x, s_y, s_xy、重みw）
+        # ガウシアンパラメタの初期化（位置x,y、分散共分散s_x, s_y, s_xy、重みw）
         self.params = nn.ParameterDict({
             'means': nn.Parameter(torch.rand(num_gaussians, 2, dtype=torch.float32, device=self.device) * \
                                   torch.tensor([width, height], dtype=torch.float32, device=self.device)),
@@ -87,154 +166,100 @@ class GaussianSplatting2D:
             'weights': nn.Parameter(torch.rand(num_gaussians, dtype=torch.float32, device=self.device) * 0.5 + 0.5)
         })
 
-    def _gaussian_2d_batch(self, pos, means, sigmas):
-        """
-        各点群からガウシアンを一括計算（共分散行列対応版）
-        pos: 座標テンソル (H, W, 2) - 評価したい点
-        means: ガウシアン中心 (N, 2) - N個のガウシアンの中心
-        sigmas: 共分散行列要素 (N, 3) [sigma_x, sigma_y, sigma_xy]
-        
-        戻り値: (N, H, W) - 各ガウシアンと各座標のPDF値
-        """
-        N = means.shape[0]
-        H, W = pos.shape[0], pos.shape[1]
-        device = pos.device
+        # 計算用座標配列も初期化
+        self.pos_for_kernel = self._create_pos_for_kernel()
 
-        #------------------------------------
-        # 1. 共分散行列の構築 (N, 2, 2)
+    def _gaussian_2d_batch(self, means:torch.nn.parameter.Parameter, sigmas:torch.nn.parameter.Parameter) -> torch.Tensor:
+        """
+        ガウシアンを一括計算（共分散あり）
+        means: ガウシアン中心 (N, 2)
+        sigmas: 分散共分散行列要素 (N, 3) [sigma_x, sigma_y, sigma_xy]
+        return: (N, H, W) - ガウシアンを描画した画像N枚
+        """
+        num_gaussians = self.num_gaussians
+        height, width = self.img_array.shape[1], self.img_array.shape[0]
+
+        # 分散共分散行列の正定値性の保証 (C_xy < sqrt(sigma_x^2 * sigma_y^2))
         sigma_x_sq = sigmas[:, 0].square()
         sigma_y_sq = sigmas[:, 1].square() 
         sigma_xy = sigmas[:, 2]
-
-        # 正定値性の保証 (C_xy < sqrt(sigma_x^2 * sigma_y^2))
         threshold = (sigma_x_sq * sigma_y_sq).sqrt() 
         sigma_xy = torch.min(torch.max(sigma_xy, -threshold), threshold)
 
         # 分散共分散行列を作成 (N, 2, 2)
-        cov_matrices = torch.zeros((N, 2, 2), dtype=pos.dtype, device=device)
+        cov_matrices = torch.zeros((num_gaussians, 2, 2),
+                                    dtype=sigmas.dtype, device=sigmas.device)
         cov_matrices[:, 0, 0] = sigma_x_sq
         cov_matrices[:, 1, 1] = sigma_y_sq
         cov_matrices[:, 0, 1] = sigma_xy
         cov_matrices[:, 1, 0] = sigma_xy
         
-        #------------------------------------
-        # 2. 評価点のテンソル形状調整
-        pos_eval = pos.reshape(-1, 2).unsqueeze(1)    # (H, W, 2)
-        pos_eval_batch = pos_eval.expand(-1, N, -1)   # (H*W, N, 2)
-
-        #------------------------------------
-        # 3. ガウシアン計算
+        # ガウシアン計算
         m = MultivariateNormal(loc=means, covariance_matrix=cov_matrices)
-        log_gaussians = m.log_prob(pos_eval_batch)          # (N, H*W)
+        log_gaussians = m.log_prob(self.pos_for_kernel)     # (N, H*W)
         gaussians = torch.exp(log_gaussians.permute(1, 0))  # (N, H*W)
-        gaussians = gaussians.view(N, H, W) 
-        
+        gaussians = gaussians.view(num_gaussians, width, height)
+
         return gaussians
+    #---------- ②共分散ありパターン [END] ------------
 
-    def _gaussian_2d_batch2(self, pos, means, sigmas):
-        """
-        各点群からガウシアンを一括計算（共分散行列対応版）
-        pos: 座標テンソル (H, W, 2)
-        means: ガウシアン中心 (N, 2)
-        sigmas: 共分散行列要素 (N, 3) [sigma_x, sigma_y, sigma_xy]
-        """
-        N = means.shape[0]
-        H, W = pos.shape[0], pos.shape[1]
-
-        # 一括計算するために、posを (1, H, W, 2) , means, sigmasを (N, 1, 1, 2/3) に拡張して計算
-        pos_exp = pos.unsqueeze(0)                    # (1, H, W, 2)
-        means_exp = means[:, None, None, :]           # (N, 1, 1, 2)
-
-        # 共分散行列要素を抽出 - 形状を明示的に制御
-        sigma_x = sigmas[:, 0].view(N, 1, 1)          # (N, 1, 1)
-        sigma_y = sigmas[:, 1].view(N, 1, 1)          # (N, 1, 1)
-        sigma_xy = sigmas[:, 2].view(N, 1, 1)         # (N, 1, 1)
-
-        # 中心からの差分
-        diff = pos_exp - means_exp                    # (N, H, W, 2)
-        dx = diff[:, :, :, 0]                         # (N, H, W)
-        dy = diff[:, :, :, 1]                         # (N, H, W)
-
-        # 共分散行列の逆行列要素を計算
-        # Σ = [[σx², σxy], [σxy, σy²]]
-        # det(Σ) = σx² * σy² - σxy²
-        det = sigma_x**2 * sigma_y**2 - sigma_xy**2   # (N, 1, 1)
-
-        # 数値安定性のためにdetに小さな値を加算
-        det = det + 1e-6
-
-        # 逆行列要素
-        inv_sigma_xx = sigma_y**2 / det               # (N, 1, 1)
-        inv_sigma_yy = sigma_x**2 / det               # (N, 1, 1)
-        inv_sigma_xy = -sigma_xy / det                # (N, 1, 1)
-
-        # マハラノビス距離の二乗を計算
-        # (x-μ)ᵀ Σ⁻¹ (x-μ) = dx²*inv_σxx + 2*dx*dy*inv_σxy + dy²*inv_σyy
-        mahalanobis_sq = (
-            dx**2 * inv_sigma_xx +
-            2 * dx * dy * inv_sigma_xy +
-            dy**2 * inv_sigma_yy
-        )  # (N, H, W)
-
-        # ガウシアン関数
-        # 1/(2π√det) * exp(-0.5 * mahalanobis_sq)
-        coeff = 1 / (2 * torch.pi * torch.sqrt(det))  # (N, 1, 1)
-        gaussians = coeff * torch.exp(-0.5 * mahalanobis_sq)      # (N, H, W)
-        return gaussians
-
-    def _generate_predicted_image(self, pos):
+    def _generate_predicted_image(self):
         """予測画像を生成"""
-        gaussian_pred = self._gaussian_2d_batch(pos, self.params['means'], self.params['sigmas'])
+        # gaussian_pred = self._gaussian_2d_batch_only_variance(self.params['means'], self.params['sigmas'])
+        gaussian_pred = self._gaussian_2d_batch(self.params['means'], self.params['sigmas'])
         img_pred = self.params['weights'][:, None, None] * gaussian_pred
         img_pred = torch.sum(img_pred, dim=0)
-        
-        # 正規化
-        if img_pred.max() > 0:
-            img_pred = img_pred / img_pred.max()
-        
+        img_pred = img_pred / img_pred.max()
+        img_pred = torch.clamp(img_pred, min:=0, max:=1)        
         return img_pred
 
-    def _plot_gaussian_points(self, img_array, points):
-        """ガウシアン点を画像に描画"""
-        # numpy配列をPIL Imageに変換
-        if img_array.max() <= 1.0:
-            img_uint8 = (img_array * 255).astype(np.uint8)
+    def _generate_gaussian_points_image(self, target_image: np.ndarray, points: np.ndarray) -> np.ndarray:
+        """
+        画像にガウシアン中心点を描画
+        target_image: 描画対象の画像
+        points: 中心点座標の配列
+        return: 描画後の画像
+        """
+        # 0.0〜1.0のfloat画像を、0〜255のBGR uint8画像に変換
+        img_uint8 = (target_image * 255).astype(np.uint8)
+        if img_uint8.ndim == 2:
+            output_image = cv2.cvtColor(img_uint8, cv2.COLOR_GRAY2BGR)
+        elif img_uint8.shape[-1] == 3:
+            output_image = img_uint8
         else:
-            img_uint8 = img_array.astype(np.uint8)
-        
-        pil_img = Image.fromarray(img_uint8).convert('RGB')
-        draw = ImageDraw.Draw(pil_img)
-        
-        # ガウシアン点を描画
+            raise NotImplementedError
+            
+        # ガウシアン中心点を描画
+        radius = 1
+        color_fill = (0, 0, 255)   # red
         for point in points:
-            x, y = point[0], point[1]
-            radius = 2
-            draw.ellipse(
-                [x - radius, y - radius, x + radius, y + radius],
-                fill=(255, 0, 0),
-                outline=(255, 255, 0)
+            x, y = int(point[0]), int(point[1])
+            cv2.circle(
+                img=output_image,
+                center=(x, y),
+                radius=radius,
+                color=color_fill,
+                lineType=cv2.LINE_AA,
+                thickness=-1  # 塗りつぶし
             )
-        
-        return np.array(pil_img)
+        return output_image
 
-    def generate_current_images(self):
-        """現在の状態から画像を生成"""
-        height, width = self.img_array.shape
-        x = torch.linspace(0, width - 1, width, device=self.device)
-        y = torch.linspace(0, height - 1, height, device=self.device)
-        X, Y = torch.meshgrid(x, y, indexing='xy')
-        pos = torch.stack([X, Y], dim=-1)
-
+    def generate_current_images(self) -> dict:
+        """
+        現在のパラメタ値から推論画像を生成
+        return:
+        推論画像をdict型で返す。
+        1. 推論画像
+        2. ガウシアン中心点をプロット付きの推論画像
+        """
         # 予測画像生成
-        img_pred = self._generate_predicted_image(pos)
+        img_pred = self._generate_predicted_image()
         img_pred_np = img_pred.cpu().detach().numpy()
         img_pred_np = np.clip(img_pred_np, 0, 1)
 
-        # ガウシアン点取得
-        points = self.params["means"].cpu().detach().numpy()
-        
         # ポイント描画画像生成
-        img_with_points = self._plot_gaussian_points(img_pred_np, points)
+        points = self.params["means"].cpu().detach().numpy()
+        img_with_points = self._generate_gaussian_points_image(img_pred_np, points)
 
         # Base64エンコード
         predicted_b64 = ImageManager.cv2_to_base64(img_pred_np)
@@ -245,19 +270,16 @@ class GaussianSplatting2D:
             "points": points_b64
         }
 
-    async def calculate_async(self, num_steps=_NUM_STEPS, opt_lr=_LEARNING_RATE, 
+    async def calculate_async(self, num_steps:int=_NUM_STEPS, opt_lr:float=_LEARNING_RATE, 
                              update_interval=100, websocket=None):
-        """2DGSの計算実行（非同期版）"""
-        import asyncio
-        
+        """
+        2DGSの計算実行（非同期版）
+        num_steps: 学習時のイテレーション回数 
+        opt_lr: 学習率
+        update_interval: イテレーションごとの更新タイミング
+        websocket: websocket（接続が失われた際の更新エラー防止用）
+        """
         target_img = torch.tensor(self.img_array, dtype=torch.float32, device=self.device)
-        
-        height, width = self.img_array.shape
-        x = torch.linspace(0, width - 1, width, device=self.device)
-        y = torch.linspace(0, height - 1, height, device=self.device)
-        X, Y = torch.meshgrid(x, y, indexing='xy')
-        pos = torch.stack([X, Y], dim=-1)
-
         optimizer = optim.Adam(self.params.parameters(), lr=opt_lr)
         
         for step in range(num_steps):
@@ -271,10 +293,9 @@ class GaussianSplatting2D:
                     })
                 break
             
-            optimizer.zero_grad()
-
             # 予測画像を作成
-            img_pred = self._generate_predicted_image(pos)
+            optimizer.zero_grad()
+            img_pred = self._generate_predicted_image()
 
             # 誤差計算
             loss = torch.mean((img_pred - target_img) ** 2)
@@ -303,6 +324,21 @@ class GaussianSplatting2D:
                 # 非同期処理のため少し待つ
                 await asyncio.sleep(0.01)
 
+    def __save_snap_image(self):
+        """イテレーションごとの画像を保存する"""
+        raise NotImplementedError
+    
+    def __create_snap_video(self):
+        """保存した画像から動画を作成する"""
+        raise NotImplementedError
+
 if __name__ == "__main__":
+    pil_image = ImageManager.open_from_filepath('/mnt/project/testdata/02_kirara_undercoat_black-modified.png')
     gs = GaussianSplatting2D()
+    gs.initialize(pil_image)
+    initial_images = gs.generate_current_images()
+
+    async def test():
+        await gs.calculate_async(num_gaussians:=1, num_steps:=10)
+    asyncio.run(test())
     print("GaussianSplatting2D test OK")

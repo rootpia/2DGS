@@ -9,14 +9,14 @@ from PIL import Image
 from torch.distributions import MultivariateNormal
 from ImageManager import ImageManager
 
-class GaussianSplatting2D:
+class GaussianSplatting2D():
     """2DGSによる画像近似"""
-    _TRAIN_IMG_W = 200      # デフォルト値：処理対象画像の幅
-    _TRAIN_IMG_H = 250      # デフォルト値：処理対象画像の高さ
-    _NUM_GAUSSIANS = 1000   # デフォルト値：ガウシアン点の数
-    _RAND_SEED = 0          # デフォルト値：乱数シード
-    _NUM_STEPS = 10000      # デフォルト値：学習ステップ数
-    _LEARNING_RATE = 0.01   # デフォルト値：学習率
+    _TRAIN_IMG_W:int = 200       # デフォルト値：処理対象画像の幅
+    _TRAIN_IMG_H:int = 250       # デフォルト値：処理対象画像の高さ
+    _NUM_GAUSSIANS:int = 1000    # デフォルト値：ガウシアン点の数
+    _RAND_SEED:int = 0           # デフォルト値：乱数シード
+    _NUM_STEPS:int = 10000       # デフォルト値：学習ステップ数
+    _LEARNING_RATE:float = 0.01  # デフォルト値：学習率
 
     def __init__(self, save_dir:str=None):
         """
@@ -183,7 +183,7 @@ class GaussianSplatting2D:
         sigma_x_sq = sigmas[:, 0].square()
         sigma_y_sq = sigmas[:, 1].square() 
         sigma_xy = sigmas[:, 2]
-        threshold = (sigma_x_sq * sigma_y_sq).sqrt() 
+        threshold = (sigma_x_sq * sigma_y_sq).sqrt() - 1e-7
         sigma_xy = torch.min(torch.max(sigma_xy, -threshold), threshold)
 
         # 分散共分散行列を作成 (N, 2, 2)

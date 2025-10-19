@@ -1,10 +1,8 @@
 from fastapi import FastAPI, File, UploadFile, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import numpy as np
 from PIL import Image
-import io
 import asyncio
 import json
 from typing import Optional
@@ -36,19 +34,14 @@ class GSParams(BaseModel):
 
 @app.get("/")
 async def root():
-    return {"message": "画像処理APIサーバーが稼働中です", "version": APP_VERSION}
+    return {"status": "service available",
+            "version": APP_VERSION,
+            "message": "画像処理APIサーバーが稼働中です"}
 
 @app.get("/health")
 async def health():
     """ヘルスチェック用エンドポイント"""
-    global gs_instance
-    gs_tmp = gs_instance if gs_instance is not None else GaussianSplatting2D()
-    device = "GPU" if gs_tmp.get_processer().type == "cuda" else "CPU"
-    return {
-        "status": "healthy", 
-        "version": APP_VERSION,
-        "device": device
-    }
+    return root()
 
 @app.get("/device-info")
 async def device_info():
@@ -120,7 +113,7 @@ async def reinitialize_gs(num_gaussians: int = 1000):
         print(f"[Reinitialize] エラー: {str(e)}")
         raise HTTPException(status_code=500, detail=f"再初期化エラー: {str(e)}")
 
-@app.websocket("/ws/train")
+@app.websocket("/train")
 async def websocket_train(websocket: WebSocket):
     """WebSocketで学習実行"""
     global gs_instance, is_processing, should_stop

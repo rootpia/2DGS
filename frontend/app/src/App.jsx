@@ -153,7 +153,7 @@ const ImageProcessingApp = () => {
     setCurrentStep(0);
     setTotalSteps(numSteps);
 
-    const ws = new WebSocket('ws://localhost:18000/ws/train');
+    const ws = new WebSocket('ws://localhost:18000/train');
     wsRef.current = ws;
 
     ws.onopen = () => {

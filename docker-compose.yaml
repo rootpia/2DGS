@@ -21,6 +21,14 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     image: gsapp_back
+    deploy:
+      resources:
+        reservations:
+          devices:
+            # すべてのGPUへのアクセスを許可
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     ports:
       - "18000:18000"
     # volumes:

@@ -18,6 +18,7 @@ const ImageProcessingApp = () => {
   const [numGaussians, setNumGaussians] = useState(1000);
   const [learningRate, setLearningRate] = useState(0.01);
   const [numSteps, setNumSteps] = useState(10000);
+  const [updateInterval, setUpdateInterval] = useState(100);
   
   const fileInputRef = useRef(null);
   const wsRef = useRef(null);
@@ -149,7 +150,7 @@ const ImageProcessingApp = () => {
     }
 
     setAppState('training');
-    addLog(`学習開始: ガウシアン数=${numGaussians}, LR=${learningRate}, Steps=${numSteps}`);
+    addLog(`学習開始: ガウシアン数=${numGaussians}, LR=${learningRate}, Steps=${numSteps}, 更新間隔=${updateInterval}`);
     setCurrentStep(0);
     setTotalSteps(numSteps);
 
@@ -161,7 +162,7 @@ const ImageProcessingApp = () => {
       ws.send(JSON.stringify({
         learning_rate: learningRate,
         num_steps: numSteps,
-        update_interval: 100
+        update_interval: updateInterval
       }));
     };
 
@@ -419,6 +420,24 @@ const ImageProcessingApp = () => {
                   disabled={appState === 'training'}
                 />
               </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  画面更新間隔（ステップ）
+                </label>
+                <input
+                  type="number"
+                  value={updateInterval}
+                  onChange={(e) => setUpdateInterval(parseInt(e.target.value))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                  min="1"
+                  max="1000"
+                  step="10"
+                  disabled={appState === 'training'}
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  何ステップごとに画面を更新するか
+                </p>
+              </div>
             </div>
             
             {/* 再初期化ボタン */}
@@ -521,7 +540,7 @@ const ImageProcessingApp = () => {
           <div className="mt-8 bg-blue-50 border border-blue-200 rounded-xl p-6">
             <h3 className="text-lg font-semibold mb-2 text-blue-800">使い方</h3>
             <div className="text-sm text-blue-700 space-y-2">
-              <p>1. パラメータを設定してください（ガウシアン数、学習率、ステップ数）</p>
+              <p>1. パラメータを設定してください（ガウシアン数、学習率、ステップ数、更新間隔）</p>
               <p>2. 画像をアップロードすると、GaussianSplattingの初期化が行われます</p>
               <p>3. 「実行」ボタンで最適化計算を開始します（自動的に最新パラメータで再初期化されます）</p>
               <p>4. 学習中は中央と右側の画像がリアルタイムで更新されます</p>

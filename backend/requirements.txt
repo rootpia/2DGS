@@ -5,3 +5,4 @@ matplotlib==3.10.0
 opencv-python==4.12.0.88
 websockets==12.0
 pydantic==2.5.0
+pytorch-msssim==1.0.0

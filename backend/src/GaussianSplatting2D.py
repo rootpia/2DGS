@@ -1,12 +1,14 @@
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 import time, os, io
 import cv2
 import asyncio
 from PIL import Image
 from torch.distributions import MultivariateNormal
+from pytorch_msssim import SSIM
 from ImageManager import ImageManager
 
 class GaussianSplatting2D():
@@ -31,6 +33,7 @@ class GaussianSplatting2D():
         self.device = self.get_processer()
         self.save_dir = self._get_save_dir(save_dir)
         self.should_stop = False
+        self.ssim_module = SSIM(data_range=1.0, size_average=True, channel=1).to(self.device)
         print(f"device: {self.device}")
         print(f"save_dir: {self.save_dir}")
 
@@ -173,17 +176,17 @@ class GaussianSplatting2D():
         """
         ガウシアンを一括計算（共分散あり）
         means: ガウシアン中心 (N, 2)
-        sigmas: 分散共分散行列要素 (N, 3) [sigma_x, sigma_y, sigma_xy]
+        sigmas: 分散共分散行列要素 (N, 3) [sigma_x_sq, sigma_y_sq, sigma_xy]
         return: (N, H, W) - ガウシアンを描画した画像N枚
         """
         num_gaussians = self.num_gaussians
         height, width = self.img_array.shape[1], self.img_array.shape[0]
 
-        # 分散共分散行列の正定値性の保証 (C_xy < sqrt(sigma_x^2 * sigma_y^2))
-        sigma_x_sq = sigmas[:, 0].square()
-        sigma_y_sq = sigmas[:, 1].square() 
+        # 分散共分散行列の正定値性の保証 (C_xy < sqrt(sigma_x^2 * sigma_y^2)
+        sigma_x_sq = sigmas[:, 0].square() #.data.clamp(min:=0.0)
+        sigma_y_sq = sigmas[:, 1].square() #.data.clamp(min:=0.0)
         sigma_xy = sigmas[:, 2]
-        threshold = (sigma_x_sq * sigma_y_sq).sqrt() - 1e-7
+        threshold = (sigma_x_sq * sigma_y_sq).sqrt() - 1e-3
         sigma_xy = torch.min(torch.max(sigma_xy, -threshold), threshold)
 
         # 分散共分散行列を作成 (N, 2, 2)
@@ -270,6 +273,18 @@ class GaussianSplatting2D():
             "points": points_b64
         }
 
+    def _ssim_loss(self, img1: torch.Tensor, img2: torch.Tensor) -> torch.Tensor:
+        """
+        SSIM (Structural Similarity Index) 損失を計算
+        img1: (H, W) のグレースケール画像テンソル
+        img2: 同上
+        return: SSIM損失
+        """
+        img1 = img1.unsqueeze(0).unsqueeze(0)
+        img2 = img2.unsqueeze(0).unsqueeze(0)
+        ssim_value = self.ssim_module(img1, img2)
+        return 1 - ssim_value
+
     async def calculate_async(self, num_steps:int=_NUM_STEPS, opt_lr:float=_LEARNING_RATE, 
                              update_interval=100, websocket=None):
         """
@@ -298,7 +313,10 @@ class GaussianSplatting2D():
             img_pred = self._generate_predicted_image()
 
             # 誤差計算
-            loss = torch.mean((img_pred - target_img) ** 2)
+            # loss = torch.mean((img_pred - target_img) ** 2)
+            lamda = 0.2
+            loss = lamda * F.l1_loss(img_pred, target_img) + \
+                   (1 - lamda) * self._ssim_loss(img_pred, target_img)
             loss.backward()
             optimizer.step()
 

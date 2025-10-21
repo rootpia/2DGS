@@ -8,6 +8,7 @@ import json
 from typing import Optional
 from ImageManager import ImageManager
 from GaussianSplatting2D import GaussianSplatting2D
+from GaussianSplatting2D_only_variance import GaussianSplatting2D_only_variance
 
 # Global
 APP_VERSION = "2.0.0"
@@ -57,6 +58,7 @@ async def device_info():
 @app.post("/initialize")
 async def initialize_gs(
     image: UploadFile = File(...),
+    class_name: str = "GaussianSplatting2D",
     num_gaussians: int = 1000
 ):
     """GaussianSplatting2Dの初期化"""
@@ -65,23 +67,31 @@ async def initialize_gs(
     if not image.content_type.startswith('image/'):
         raise HTTPException(status_code=400, detail="画像ファイルを選択してください")
     
+    class_object = globals().get(class_name)
+    if class_object is None or not isinstance(class_object, type):
+        raise ValueError(f"クラス名 '{class_name}' は見つからないか、クラスではありません。")
+    
     try:
         print(f"[Initialize] 開始: num_gaussians={num_gaussians}")
         
         # 画像を読み込み＋GaussianSplatting2Dインスタンス初期化
         pil_image = ImageManager.open_from_uploadfile(image)
-        gs_instance = GaussianSplatting2D()
+        gs_instance = class_object()
         gs_instance.initialize(pil_image, num_gaussians=num_gaussians)
         initial_images = gs_instance.generate_current_images()
-        
+
+        b64img_org = ImageManager.pil_to_base64(gs_instance.img_org)
+        b64img_pred = ImageManager.cv2_to_base64(initial_images["predicted"])
+        b64img_predpoint = ImageManager.cv2_to_base64(initial_images["points"])
+
         print(f"[Initialize] 完了")
         
         return {
             "status": "initialized",
             "num_gaussians": num_gaussians,
-            "original_image": _image_to_base64(gs_instance.img_org),
-            "predicted_image": initial_images["predicted"],
-            "points_image": initial_images["points"]
+            "original_image": b64img_org,
+            "predicted_image": b64img_pred,
+            "points_image": b64img_predpoint
         }
         
     except Exception as e:
@@ -100,13 +110,15 @@ async def reinitialize_gs(num_gaussians: int = 1000):
         print(f"[Reinitialize] 開始: num_gaussians={num_gaussians}")
         gs_instance.create_gaussian_params(num_gaussians)
         initial_images = gs_instance.generate_current_images()
+        b64img_pred = ImageManager.cv2_to_base64(initial_images["predicted"])
+        b64img_predpoint = ImageManager.cv2_to_base64(initial_images["points"])
         print(f"[Reinitialize] 完了")
         
         return {
             "status": "reinitialized",
             "num_gaussians": num_gaussians,
-            "predicted_image": initial_images["predicted"],
-            "points_image": initial_images["points"]
+            "predicted_image": b64img_pred,
+            "points_image": b64img_predpoint
         }
         
     except Exception as e:
@@ -183,18 +195,6 @@ async def stop_training():
     print("[Stop] 学習中断リクエスト")
     return {"status": "stopping"}
 
-def _image_to_base64(image) -> str:
-    """PIL ImageまたはNumpy配列をBase64文字列に変換"""
-    if isinstance(image, np.ndarray):
-        # Numpy配列の場合
-        image = (image * 255).astype(np.uint8)
-        pil_image = Image.fromarray(image)
-    else:
-        pil_image = image
-    
-    img_bytes = ImageManager.pil_to_bytes(pil_image, "PNG")
-    import base64
-    return base64.b64encode(img_bytes.getvalue()).decode('utf-8')
 
 if __name__ == "__main__":
     import uvicorn

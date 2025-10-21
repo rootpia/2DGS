@@ -91,16 +91,23 @@ class ImageManager:
         return pil_image
 
     @staticmethod
-    def cv2_to_base64(img_array: np.ndarray): # -> bytes:
+    def pil_to_base64(pil_image: Image) -> str:
+        """PIL ImageをBase64文字列に変換"""
+        img_bytes = ImageManager.pil_to_bytes(pil_image, "PNG")
+        return base64.b64encode(img_bytes.getvalue()).decode('utf-8')
+
+    @staticmethod
+    def cv2_to_base64(img_array: np.ndarray) -> str:
         """Numpy配列をBase64文字列に変換"""
         if img_array.max() <= 1.0:
             img_uint8 = (img_array * 255).astype(np.uint8)
         else:
             img_uint8 = img_array.astype(np.uint8)  
                   
-        pil_img = ImageManager.cv2_to_pil(img_uint8)
-        img_bytes = ImageManager.pil_to_bytes(pil_img, "PNG")
+        # pil_img = ImageManager.cv2_to_pil(img_uint8)
+        img_bytes = ImageManager.cv2_to_bytes(img_uint8, "PNG")
         return base64.b64encode(img_bytes.getvalue()).decode('utf-8')
+
 
 if __name__ == "__main__":
     pil_img = ImageManager.open_from_filepath("/mnt/project/testdata/02_kirara_undercoat_black-modified.png")

@@ -203,13 +203,9 @@ class GaussianSplatting2D():
         points = self.params["means"].cpu().detach().numpy()
         img_with_points = self._generate_gaussian_points_image(img_pred_np, points)
 
-        # Base64エンコード
-        predicted_b64 = ImageManager.cv2_to_base64(img_pred_np)
-        points_b64 = ImageManager.cv2_to_base64(img_with_points)
-
         return {
-            "predicted": predicted_b64,
-            "points": points_b64
+            "predicted": img_pred_np,
+            "points": img_with_points
         }
 
     def _ssim_loss(self, img1: torch.Tensor, img2: torch.Tensor) -> torch.Tensor:
@@ -273,8 +269,9 @@ class GaussianSplatting2D():
                 print(message)
                 
                 if websocket:
-                    # 画像生成
                     images = self.generate_current_images()
+                    b64img_pred = ImageManager.cv2_to_base64(images["predicted"])
+                    b64img_predpoint = ImageManager.cv2_to_base64(images["points"])
                     
                     await websocket.send_json({
                         "type": "update",
@@ -282,8 +279,8 @@ class GaussianSplatting2D():
                         "total_steps": num_steps,
                         "loss": loss.item(),
                         "message": message,
-                        "predicted_image": images["predicted"],
-                        "points_image": images["points"]
+                        "predicted_image": b64img_pred,
+                        "points_image": b64img_predpoint
                     })
                 
                 # 非同期処理のため少し待つ

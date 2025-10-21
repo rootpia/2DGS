@@ -48,8 +48,8 @@ class GaussianSplatting2D():
         """
         self.num_gaussians = num_gaussians
         self.img_org = input_image.convert('L').resize((resize_w, resize_h))
-        self.img_array = np.array(self.img_org).astype(np.float32) / 255.0
-        # self.create_gaussian_params_only_variance(num_gaussians)
+        np_img = np.array(self.img_org).astype(np.float32) / 255.0
+        self.img_array = torch.tensor(np_img, dtype=torch.float32, device=self.device)
         self.create_gaussian_params(num_gaussians)
 
     def get_processer(self) -> torch.device:
@@ -70,65 +70,6 @@ class GaussianSplatting2D():
                 target_dir = os.path.join(parent_save_dir, localtime)
         return target_dir
 
-    #---------- ①共分散なしパターン [START] ------------
-    def _create_pos_for_kernel_only_variance(self) -> torch.Tensor:
-        """
-        画像フィルタ(カーネル)計算用の座標配列を作成
-        note:
-          画像と同サイズのカーネルを作成し、
-          ガウシアンカーネルを計算するときの要領で、ガウシアンを画像に描画する。
-        return: 画像と同サイズのカーネル
-        """
-        height, width = self.img_array.shape
-        x = torch.linspace(0, width - 1, width, device=self.device)
-        y = torch.linspace(0, height - 1, height, device=self.device)
-        X, Y = torch.meshgrid(x, y, indexing='xy')
-        XY = torch.stack([X, Y], dim=-1)
-        
-        # 共分散なしパターン用に整形
-        XY_reshape = XY.unsqueeze(0)
-        return XY_reshape
-
-    def create_gaussian_params_only_variance(self, num_gaussians:int):
-        """
-        ガウシアン点の初期化（共分散を除外）
-        num_gaussians: ガウシアン点数
-        """
-        self.num_gaussians = num_gaussians
-        torch.manual_seed(GaussianSplatting2D._RAND_SEED)
-        height, width = self.img_array.shape
-
-        # ガウシアンパラメタの初期化（位置x,y、分散s_x, s_y、重みw）
-        self.params = nn.ParameterDict({
-            'means': nn.Parameter(torch.rand(num_gaussians, 2, dtype=torch.float32, device=self.device) * \
-                                  torch.tensor([width, height], dtype=torch.float32, device=self.device)),
-            'sigmas': nn.Parameter(torch.ones(num_gaussians, 2, dtype=torch.float32, device=self.device) * 5.0),
-            'weights': nn.Parameter(torch.rand(num_gaussians, dtype=torch.float32, device=self.device) * 0.5 + 0.5)
-        })
-
-        # 計算用座標配列も初期化
-        self.pos_for_kernel = self._create_pos_for_kernel_only_variance()
-
-    def _gaussian_2d_batch_only_variance(self, means:torch.nn.parameter.Parameter, sigmas:torch.nn.parameter.Parameter) -> torch.Tensor:
-        """
-        ガウシアンを一括計算（共分散を除外）
-        means: ガウウシアン中心 (N, 2)
-        sigmas: 分散共分散行列の要素 (N, 2) [sigma_x, sigma_y]
-        return: ガウシアン (N, H, W)
-        """
-        means_exp = means[:, None, None, :]
-        sigmas_exp = sigmas[:, None, None, :]
-
-        diff = self.pos_for_kernel - means_exp
-        denom = 2 * sigmas_exp.pow(2)
-        exponent = - (diff[:, :, :, 0] ** 2 / denom[:, :, :, 0] + diff[:, :, :, 1] ** 2 / denom[:, :, :, 1])
-        coeff = 1 / (2 * torch.pi * sigmas_exp[:, :, :, 0] * sigmas_exp[:, :, :, 1])
-
-        gaussians = coeff * torch.exp(exponent)
-        return gaussians
-    #---------- ①共分散なしパターン [END] --------------
-
-    #---------- ②共分散ありパターン [START] ------------
     def _create_pos_for_kernel(self) -> torch.Tensor:
         """
         画像フィルタ(カーネル)計算用の座標配列を作成。
@@ -204,11 +145,9 @@ class GaussianSplatting2D():
         gaussians = gaussians.view(num_gaussians, width, height)
 
         return gaussians
-    #---------- ②共分散ありパターン [END] ------------
 
     def _generate_predicted_image(self):
         """予測画像を生成"""
-        # gaussian_pred = self._gaussian_2d_batch_only_variance(self.params['means'], self.params['sigmas'])
         gaussian_pred = self._gaussian_2d_batch(self.params['means'], self.params['sigmas'])
         img_pred = self.params['weights'][:, None, None] * gaussian_pred
         img_pred = torch.sum(img_pred, dim=0)
@@ -285,16 +224,26 @@ class GaussianSplatting2D():
         ssim_value = self.ssim_module(img1, img2)
         return 1 - ssim_value
 
+    def _calc_loss_l1_ssim(self, img_pred: torch.Tensor, img_gt: torch.Tensor, coef:float=0.2) -> torch.Tensor:
+        loss = coef * F.l1_loss(img_pred, img_gt) + \
+                (1 - coef) * self._ssim_loss(img_pred, img_gt)
+        return loss
+    
+    def _calc_loss_l2(self, img_pred: torch.Tensor, img_gt: torch.Tensor) -> torch.Tensor:
+        loss = loss = torch.mean((img_pred - img_gt) ** 2)
+        return loss
+
     async def calculate_async(self, num_steps:int=_NUM_STEPS, opt_lr:float=_LEARNING_RATE, 
-                             update_interval=100, websocket=None):
+                             loss_func_name="_calc_loss_l1_ssim", update_interval:int=100, websocket=None):
         """
         2DGSの計算実行（非同期版）
         num_steps: 学習時のイテレーション回数 
         opt_lr: 学習率
+        loss_func_name: 誤差計算用の関数名
         update_interval: イテレーションごとの更新タイミング
         websocket: websocket（接続が失われた際の更新エラー防止用）
         """
-        target_img = torch.tensor(self.img_array, dtype=torch.float32, device=self.device)
+        target_img = self.img_array
         optimizer = optim.Adam(self.params.parameters(), lr=opt_lr)
         
         for step in range(num_steps):
@@ -313,10 +262,8 @@ class GaussianSplatting2D():
             img_pred = self._generate_predicted_image()
 
             # 誤差計算
-            # loss = torch.mean((img_pred - target_img) ** 2)
-            lamda = 0.2
-            loss = lamda * F.l1_loss(img_pred, target_img) + \
-                   (1 - lamda) * self._ssim_loss(img_pred, target_img)
+            method = getattr(self, loss_func_name, None)
+            loss = method(img_pred, target_img)
             loss.backward()
             optimizer.step()
 

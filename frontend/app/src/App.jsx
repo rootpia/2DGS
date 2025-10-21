@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Upload, Play, Square, Loader2, Cpu, Settings, RefreshCw } from 'lucide-react';
+import { Upload, Play, Square, Loader2, Cpu, Settings, RefreshCw, HelpCircle, X } from 'lucide-react';
 
 const ImageProcessingApp = () => {
   // 状態管理
@@ -13,6 +13,7 @@ const ImageProcessingApp = () => {
   const [totalSteps, setTotalSteps] = useState(0);
   const [currentLoss, setCurrentLoss] = useState(null);
   const [currentFile, setCurrentFile] = useState(null);
+  const [showHelp, setShowHelp] = useState(false);
   
   // パラメータ
   const [numGaussians, setNumGaussians] = useState(1000);
@@ -241,15 +242,22 @@ const ImageProcessingApp = () => {
   const progressPercentage = totalSteps > 0 ? (currentStep / totalSteps) * 100 : 0;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-100 to-gray-200 p-6">
+    <div className="min-h-screen bg-gradient-to-br from-gray-100 to-gray-200 p-4">
       <div className="max-w-7xl mx-auto">
         {/* ヘッダー */}
-        <div className="mb-8">
+        <div className="mb-4">
           <div className="flex items-center justify-between">
             <h1 className="text-4xl font-bold text-gray-800">
               2DGS
             </h1>
             <div className="flex items-center gap-4 text-sm text-gray-600">
+              <button
+                onClick={() => setShowHelp(true)}
+                className="flex items-center gap-2 bg-blue-100 hover:bg-blue-200 text-blue-700 px-4 py-2 rounded-lg shadow transition-colors"
+              >
+                <HelpCircle className="w-4 h-4" />
+                <span>使い方</span>
+              </button>
               <div className="flex items-center gap-2 bg-white px-4 py-2 rounded-lg shadow">
                 <Cpu className="w-4 h-4" />
                 <span>デバイス: {deviceInfo || '取得中...'}</span>
@@ -268,11 +276,11 @@ const ImageProcessingApp = () => {
         </div>
 
         {/* メインコンテンツ：3列レイアウト */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           {/* 左列：オリジナル画像 */}
-          <div className="space-y-6">
-            <div className="bg-white rounded-xl shadow-lg p-6">
-              <div className="flex items-center justify-between mb-4">
+          <div className="space-y-4">
+            <div className="bg-white rounded-xl shadow-lg p-4">
+              <div className="flex items-center justify-between mb-2">
                 <h2 className="text-xl font-semibold text-gray-700">
                   Original Image
                 </h2>
@@ -322,9 +330,9 @@ const ImageProcessingApp = () => {
           </div>
 
           {/* 中央列：予測画像 */}
-          <div className="space-y-6">
-            <div className="bg-white rounded-xl shadow-lg p-6">
-              <h2 className="text-xl font-semibold mb-4 text-gray-700">
+          <div className="space-y-4">
+            <div className="bg-white rounded-xl shadow-lg p-4">
+              <h2 className="text-xl font-semibold mb-2 text-gray-700">
                 Predicted Image
               </h2>
               <div className="border-2 border-gray-200 rounded-lg aspect-square flex items-center justify-center bg-gray-50 overflow-hidden">
@@ -344,9 +352,9 @@ const ImageProcessingApp = () => {
           </div>
 
           {/* 右列：ガウシアンポイント */}
-          <div className="space-y-6">
-            <div className="bg-white rounded-xl shadow-lg p-6">
-              <h2 className="text-xl font-semibold mb-4 text-gray-700">
+          <div className="space-y-4">
+            <div className="bg-white rounded-xl shadow-lg p-4">
+              <h2 className="text-xl font-semibold mb-2 text-gray-700">
                 Gaussian Points
               </h2>
               <div className="border-2 border-gray-200 rounded-lg aspect-square flex items-center justify-center bg-gray-50 overflow-hidden">
@@ -366,131 +374,102 @@ const ImageProcessingApp = () => {
           </div>
         </div>
 
-        {/* 下段：パラメータ/コントロール + ログ */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-6">
+        {/* 下段：パラメータ/コントロール + ログ + プログレスバー */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mt-4">
           {/* 左列：パラメータ設定＆学習コントロール */}
-          <div className="bg-white rounded-xl shadow-lg p-6">
-            <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
-              <Settings className="w-5 h-5" />
-              パラメータ設定
-            </h2>
-            <div className="space-y-3 mb-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
+          <div className="bg-white rounded-xl shadow-lg p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-xl font-semibold flex items-center gap-2">
+                <Settings className="w-5 h-5" />
+                パラメタ設定
+              </h2>
+              {(appState === 'loaded' || appState === 'paused') && (
+                <button
+                  onClick={handleReinitialize}
+                  className="bg-purple-500 hover:bg-purple-600 text-white px-3 py-1 rounded-lg transition-colors flex items-center gap-1 text-sm"
+                  disabled={appState === 'training'}
+                >
+                  <RefreshCw className="w-3 h-3" />
+                  再初期化
+                </button>
+              )}
+            </div>
+            <div className="space-y-2 mb-3">
+              <div className="flex items-center gap-2">
+                <label className="text-sm font-medium text-gray-700 w-32 flex-shrink-0">
                   ガウシアン数
                 </label>
                 <input
                   type="number"
                   value={numGaussians}
                   onChange={(e) => setNumGaussians(parseInt(e.target.value))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                  className="flex-1 px-2 py-1 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                   min="1"
                   max="5000"
                   step="100"
                   disabled={appState === 'training'}
                 />
               </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
+              <div className="flex items-center gap-2">
+                <label className="text-sm font-medium text-gray-700 w-32 flex-shrink-0">
                   学習率
                 </label>
                 <input
                   type="number"
                   value={learningRate}
                   onChange={(e) => setLearningRate(parseFloat(e.target.value))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                  className="flex-1 px-2 py-1 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                   min="0.001"
                   max="0.1"
                   step="0.001"
                   disabled={appState === 'training'}
                 />
               </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
+              <div className="flex items-center gap-2">
+                <label className="text-sm font-medium text-gray-700 w-32 flex-shrink-0">
                   学習ステップ数
                 </label>
                 <input
                   type="number"
                   value={numSteps}
                   onChange={(e) => setNumSteps(parseInt(e.target.value))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                  className="flex-1 px-2 py-1 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                   min="100"
                   max="50000"
                   step="100"
                   disabled={appState === 'training'}
                 />
               </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  画面更新間隔（ステップ）
+              <div className="flex items-center gap-2">
+                <label className="text-sm font-medium text-gray-700 w-32 flex-shrink-0">
+                  画面更新間隔
                 </label>
                 <input
                   type="number"
                   value={updateInterval}
                   onChange={(e) => setUpdateInterval(parseInt(e.target.value))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                  className="flex-1 px-2 py-1 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                   min="1"
                   max="1000"
                   step="10"
                   disabled={appState === 'training'}
                 />
-                <p className="text-xs text-gray-500 mt-1">
-                  何ステップごとに画面を更新するか
-                </p>
               </div>
             </div>
-            
-            {/* 再初期化ボタン */}
-            {(appState === 'loaded' || appState === 'paused') && (
-              <button
-                onClick={handleReinitialize}
-                className="w-full mb-4 bg-purple-500 hover:bg-purple-600 text-white px-4 py-2 rounded-lg transition-colors flex items-center justify-center gap-2"
-                disabled={appState === 'training'}
-              >
-                <RefreshCw className="w-4 h-4" />
-                再初期化
-              </button>
-            )}
 
             {/* 学習コントロール */}
             {(appState === 'loaded' || appState === 'training' || appState === 'paused') && (
               <div>
-                <h3 className="text-lg font-semibold mb-3 text-gray-700">
+                <h3 className="text-lg font-semibold mb-2 text-gray-700">
                   学習コントロール
                 </h3>
-                
-                {/* プログレスバー */}
-                {totalSteps > 0 && (
-                  <div className="mb-4">
-                    <div className="flex justify-between text-sm text-gray-600 mb-1">
-                      <span>学習進捗</span>
-                      <span>{progressPercentage.toFixed(1)}%</span>
-                    </div>
-                    <div className="w-full bg-gray-200 rounded-full h-3">
-                      <div 
-                        className="h-3 bg-gradient-to-r from-blue-500 to-green-500 rounded-full transition-all duration-300"
-                        style={{ width: `${progressPercentage}%` }}
-                      ></div>
-                    </div>
-                    {currentLoss !== null && (
-                      <div className="mt-2 text-sm text-gray-600">
-                        Loss: <span className="font-mono font-semibold">{currentLoss.toFixed(6)}</span>
-                      </div>
-                    )}
-                    {totalSteps > 0 && (
-                      <div className="mt-1 text-sm text-gray-600">
-                        進捗: <span className="font-semibold">{currentStep} / {totalSteps}</span>
-                      </div>
-                    )}
-                  </div>
-                )}
 
                 {/* ボタン */}
                 <div className="space-y-2">
                   {appState === 'loaded' || appState === 'paused' ? (
                     <button
                       onClick={startTraining}
-                      className="w-full bg-green-500 hover:bg-green-600 text-white px-6 py-3 rounded-lg transition-colors flex items-center justify-center gap-2 font-semibold"
+                      className="w-full bg-green-500 hover:bg-green-600 text-white px-6 py-2 rounded-lg transition-colors flex items-center justify-center gap-2 font-semibold"
                     >
                       <Play className="w-5 h-5" />
                       実行
@@ -498,7 +477,7 @@ const ImageProcessingApp = () => {
                   ) : (
                     <button
                       onClick={stopTraining}
-                      className="w-full bg-red-500 hover:bg-red-600 text-white px-6 py-3 rounded-lg transition-colors flex items-center justify-center gap-2 font-semibold"
+                      className="w-full bg-red-500 hover:bg-red-600 text-white px-6 py-2 rounded-lg transition-colors flex items-center justify-center gap-2 font-semibold"
                     >
                       <Square className="w-5 h-5" />
                       学習中断
@@ -517,34 +496,129 @@ const ImageProcessingApp = () => {
             )}
           </div>
 
-          {/* 中央～右列：処理ログ（2列分） */}
-          {logs.length > 0 && (
-            <div className="lg:col-span-2 bg-white rounded-xl shadow-lg p-6">
-              <h2 className="text-xl font-semibold mb-4 text-gray-700">
-                処理ログ
-              </h2>
-              <div className="bg-gray-900 text-green-400 p-4 rounded-lg font-mono text-sm h-96 overflow-y-auto">
-                {logs.map((log, index) => (
-                  <div key={index} className="mb-1">
-                    {log}
+          {/* 中央～右列：処理状況（プログレスバー + ログ） */}
+          <div className="lg:col-span-2 bg-white rounded-xl shadow-lg p-4">
+            <h2 className="text-xl font-semibold mb-3 text-gray-700">
+              処理状況
+            </h2>
+            
+            {/* プログレスバー */}
+            {totalSteps > 0 && (
+              <div className="mb-3">
+                <div className="flex justify-between text-sm text-gray-600 mb-1">
+                  <span>学習進捗</span>
+                  <span>{progressPercentage.toFixed(1)}%</span>
+                </div>
+                <div className="w-full bg-gray-200 rounded-full h-3 mb-2">
+                  <div 
+                    className="h-3 bg-gradient-to-r from-blue-500 to-green-500 rounded-full transition-all duration-300"
+                    style={{ width: `${progressPercentage}%` }}
+                  ></div>
+                </div>
+                <div className="flex justify-between text-sm text-gray-600">
+                  <div>
+                    ステップ: <span className="font-semibold">{currentStep} / {totalSteps}</span>
                   </div>
-                ))}
-                <div ref={logsEndRef} />
+                  {currentLoss !== null && (
+                    <div>
+                      Loss: <span className="font-mono font-semibold">{currentLoss.toFixed(6)}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+            
+            {/* 処理ログ */}
+            <div>
+              <h3 className="text-sm font-semibold mb-2 text-gray-600">処理ログ</h3>
+              <div className="bg-gray-900 text-green-400 p-3 rounded-lg font-mono text-xs h-64 overflow-y-auto">
+                {logs.length > 0 ? (
+                  <>
+                    {logs.map((log, index) => (
+                      <div key={index} className="mb-1">
+                        {log}
+                      </div>
+                    ))}
+                    <div ref={logsEndRef} />
+                  </>
+                ) : (
+                  <div className="text-gray-500 text-center py-8">
+                    ログはまだありません
+                  </div>
+                )}
               </div>
             </div>
-          )}
+          </div>
         </div>
 
-        {/* 説明 */}
-        {appState === 'waiting' && (
-          <div className="mt-8 bg-blue-50 border border-blue-200 rounded-xl p-6">
-            <h3 className="text-lg font-semibold mb-2 text-blue-800">使い方</h3>
-            <div className="text-sm text-blue-700 space-y-2">
-              <p>1. パラメータを設定してください（ガウシアン数、学習率、ステップ数、更新間隔）</p>
-              <p>2. 画像をアップロードすると、GaussianSplattingの初期化が行われます</p>
-              <p>3. 「実行」ボタンで最適化計算を開始します（自動的に最新パラメータで再初期化されます）</p>
-              <p>4. 学習中は中央と右側の画像がリアルタイムで更新されます</p>
-              <p>5. 「学習中断」ボタンでいつでも処理を停止できます</p>
+        {/* ヘルプモーダル */}
+        {showHelp && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[80vh] overflow-y-auto">
+              <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
+                <h3 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
+                  <HelpCircle className="w-6 h-6 text-blue-500" />
+                  使い方
+                </h3>
+                <button
+                  onClick={() => setShowHelp(false)}
+                  className="text-gray-400 hover:text-gray-600 transition-colors"
+                >
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+              <div className="p-6">
+                <div className="space-y-4 text-gray-700">
+                  <div className="bg-blue-50 border-l-4 border-blue-500 p-4 rounded">
+                    <h4 className="font-semibold text-blue-800 mb-2">📝 基本的な流れ</h4>
+                    <ol className="list-decimal list-inside space-y-2 text-sm">
+                      <li>パラメータを設定してください（ガウシアン数、学習率、ステップ数、更新間隔）</li>
+                      <li>画像をアップロードすると、GaussianSplattingの初期化が行われます</li>
+                      <li>「実行」ボタンで最適化計算を開始します（自動的に最新パラメータで再初期化されます）</li>
+                      <li>学習中は中央と右側の画像がリアルタイムで更新されます</li>
+                      <li>「学習中断」ボタンでいつでも処理を停止できます</li>
+                    </ol>
+                  </div>
+                  
+                  <div className="bg-green-50 border-l-4 border-green-500 p-4 rounded">
+                    <h4 className="font-semibold text-green-800 mb-2">⚙️ パラメータ説明</h4>
+                    <ul className="space-y-2 text-sm">
+                      <li><strong>ガウシアン数:</strong> 画像を近似するガウシアン点の数（多いほど精密だが計算時間が増加）</li>
+                      <li><strong>学習率:</strong> 最適化の更新幅（大きいほど速いが不安定になる可能性）</li>
+                      <li><strong>学習ステップ数:</strong> 最適化の反復回数（多いほど精度が向上）</li>
+                      <li><strong>画面更新間隔:</strong> 何ステップごとに画面を更新するか（小さいほど頻繁に更新）</li>
+                    </ul>
+                  </div>
+                  
+                  <div className="bg-purple-50 border-l-4 border-purple-500 p-4 rounded">
+                    <h4 className="font-semibold text-purple-800 mb-2">🎯 表示画像の説明</h4>
+                    <ul className="space-y-2 text-sm">
+                      <li><strong>Original Image:</strong> アップロードされた元画像</li>
+                      <li><strong>Predicted Image:</strong> ガウシアンで近似された予測画像</li>
+                      <li><strong>Gaussian Points:</strong> 各ガウシアンの中心位置を赤点で表示</li>
+                    </ul>
+                  </div>
+                  
+                  <div className="bg-yellow-50 border-l-4 border-yellow-500 p-4 rounded">
+                    <h4 className="font-semibold text-yellow-800 mb-2">💡 Tips</h4>
+                    <ul className="space-y-2 text-sm">
+                      <li>パラメータ変更後は「再初期化」ボタンで即座に反映できます</li>
+                      <li>学習中でも「学習中断」でいつでも停止可能です</li>
+                      <li>処理ログで学習の進捗とLoss値を確認できます</li>
+                      <li>GPU使用時は大幅に高速化されます（デバイス情報を確認）</li>
+                    </ul>
+                  </div>
+                </div>
+                
+                <div className="mt-6 text-center">
+                  <button
+                    onClick={() => setShowHelp(false)}
+                    className="bg-blue-500 hover:bg-blue-600 text-white px-8 py-3 rounded-lg transition-colors font-semibold"
+                  >
+                    閉じる
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         )}

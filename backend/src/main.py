@@ -72,12 +72,19 @@ async def initialize_gs(
         raise ValueError(f"クラス名 '{class_name}' は見つからないか、クラスではありません。")
     
     try:
-        print(f"[Initialize] 開始: num_gaussians={num_gaussians}")
+        print(f"[Initialize] 開始: class={class_name}, num_gaussians={num_gaussians}")
         
-        # 画像を読み込み＋GaussianSplatting2Dインスタンス初期化
+        # 画像を読み込み、リサイズ比計算
         pil_image = ImageManager.open_from_uploadfile(image)
+        org_w, org_h = pil_image.size
+        aspect_ratio = org_w / org_h
+        new_h = 250
+        new_w = int(new_h * aspect_ratio)
+
+        # インスタンス初期化
         gs_instance = class_object()
-        gs_instance.initialize(pil_image, num_gaussians=num_gaussians)
+        gs_instance.initialize(pil_image, resize_w:=new_w, resize_h:=new_h,
+                               num_gaussians=num_gaussians)
         initial_images = gs_instance.generate_current_images()
 
         b64img_org = ImageManager.pil_to_base64(gs_instance.img_org)
@@ -99,13 +106,27 @@ async def initialize_gs(
         raise HTTPException(status_code=500, detail=f"初期化エラー: {str(e)}")
 
 @app.post("/reinitialize")
-async def reinitialize_gs(num_gaussians: int = 1000):
+async def reinitialize_gs(class_name: str = "GaussianSplatting2D",
+                          num_gaussians: int = 1000):
     """既存の画像でガウシアンパラメータを再初期化"""
     global gs_instance
     
     if gs_instance is None or gs_instance.img_array is None:
         raise HTTPException(status_code=400, detail="画像が読み込まれていません")
     
+    class_object = globals().get(class_name)
+    if class_object is None or not isinstance(class_object, type):
+        raise ValueError(f"クラス名 '{class_name}' は見つからないか、クラスではありません")
+
+    # クラス(=処理方法)を切替
+    if not isinstance(gs_instance, class_object):
+        input_image = gs_instance.img_org
+        resize_w, resize_h = input_image.size
+        num_gaussians = num_gaussians
+        gs_instance = class_object()
+        gs_instance.initialize(input_image:=input_image,
+                            resize_w:=resize_w, resize_h:=resize_h, num_gaussians:=num_gaussians)
+
     try:
         print(f"[Reinitialize] 開始: num_gaussians={num_gaussians}")
         gs_instance.create_gaussian_params(num_gaussians)
@@ -140,7 +161,8 @@ async def websocket_train(websocket: WebSocket):
         learning_rate = params.get("learning_rate", 0.01)
         num_steps = params.get("num_steps", 10000)
         update_interval = params.get("update_interval", 100)
-        
+        loss_function = params.get("loss_function", "_calc_loss_l1_ssim")
+
         if gs_instance is None:
             await websocket.send_json({
                 "type": "error",
@@ -160,6 +182,7 @@ async def websocket_train(websocket: WebSocket):
         await gs_instance.calculate_async(
             num_steps=num_steps,
             opt_lr=learning_rate,
+            loss_func_name=loss_function,
             update_interval=update_interval,
             websocket=websocket
         )

@@ -20,6 +20,8 @@ const ImageProcessingApp = () => {
   const [learningRate, setLearningRate] = useState(0.01);
   const [numSteps, setNumSteps] = useState(10000);
   const [updateInterval, setUpdateInterval] = useState(100);
+  const [approximationMethod, setApproximationMethod] = useState('covariance'); // 'variance' or 'covariance'
+  const [lossFunction, setLossFunction] = useState('l1_ssim'); // 'l2' or 'l1_ssim'
   
   const fileInputRef = useRef(null);
   const wsRef = useRef(null);
@@ -47,12 +49,18 @@ const ImageProcessingApp = () => {
 
   const initializeWithImage = async (file) => {
     setAppState('loading');
-    addLog(`画像初期化開始: ガウシアン数=${numGaussians}`);
+    addLog(`画像初期化開始: ガウシアン数=${numGaussians}, 近似方法=${approximationMethod === 'variance' ? '分散' : '分散共分散'}`);
 
     try {
       const formData = new FormData();
       formData.append('image', file);
       formData.append('num_gaussians', numGaussians);
+      
+      // 近似方法に応じてクラス名を決定
+      const className = approximationMethod === 'variance' 
+        ? 'GaussianSplatting2D_only_variance' 
+        : 'GaussianSplatting2D';
+      formData.append('class_name', className);
 
       const response = await fetch('http://localhost:18000/initialize', {
         method: 'POST',
@@ -113,6 +121,7 @@ const ImageProcessingApp = () => {
     addLog(`パラメータ再適用: ガウシアン数=${numGaussians}`);
     
     const scrollY = window.scrollY;
+
     
     try {
       const response = await fetch(`http://localhost:18000/reinitialize?num_gaussians=${numGaussians}`, {
@@ -151,7 +160,7 @@ const ImageProcessingApp = () => {
     }
 
     setAppState('training');
-    addLog(`学習開始: ガウシアン数=${numGaussians}, LR=${learningRate}, Steps=${numSteps}, 更新間隔=${updateInterval}`);
+    addLog(`学習開始: ガウシアン数=${numGaussians}, LR=${learningRate}, Steps=${numSteps}, 更新間隔=${updateInterval}, 誤差関数=${lossFunction === 'l2' ? 'L2' : 'L1+SSIM'}`);
     setCurrentStep(0);
     setTotalSteps(numSteps);
 
@@ -160,10 +169,15 @@ const ImageProcessingApp = () => {
 
     ws.onopen = () => {
       addLog('WebSocket接続確立');
+      
+      // 誤差関数名を決定
+      const lossFuncName = lossFunction === 'l2' ? '_calc_loss_l2' : '_calc_loss_l1_ssim';
+      
       ws.send(JSON.stringify({
         learning_rate: learningRate,
         num_steps: numSteps,
-        update_interval: updateInterval
+        update_interval: updateInterval,
+        loss_function: lossFuncName
       }));
     };
 
@@ -397,6 +411,34 @@ const ImageProcessingApp = () => {
             <div className="space-y-2 mb-3">
               <div className="flex items-center gap-2">
                 <label className="text-sm font-medium text-gray-700 w-32 flex-shrink-0">
+                  近似方法
+                </label>
+                <select
+                  value={approximationMethod}
+                  onChange={(e) => setApproximationMethod(e.target.value)}
+                  className="flex-1 px-2 py-1 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                  disabled={appState === 'training'}
+                >
+                  <option value="covariance">分散共分散</option>
+                  <option value="variance">分散</option>
+                </select>
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-sm font-medium text-gray-700 w-32 flex-shrink-0">
+                  誤差関数
+                </label>
+                <select
+                  value={lossFunction}
+                  onChange={(e) => setLossFunction(e.target.value)}
+                  className="flex-1 px-2 py-1 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                  disabled={appState === 'training'}
+                >
+                  <option value="l1_ssim">L1+SSIM</option>
+                  <option value="l2">L2</option>
+                </select>
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-sm font-medium text-gray-700 w-32 flex-shrink-0">
                   ガウシアン数
                 </label>
                 <input
@@ -583,6 +625,8 @@ const ImageProcessingApp = () => {
                   <div className="bg-green-50 border-l-4 border-green-500 p-4 rounded">
                     <h4 className="font-semibold text-green-800 mb-2">⚙️ パラメータ説明</h4>
                     <ul className="space-y-2 text-sm">
+                      <li><strong>近似方法:</strong> ガウシアンの表現方法（分散のみ or 分散共分散行列）</li>
+                      <li><strong>誤差関数:</strong> 学習に使用する損失関数（L2 or L1+SSIM）</li>
                       <li><strong>ガウシアン数:</strong> 画像を近似するガウシアン点の数（多いほど精密だが計算時間が増加）</li>
                       <li><strong>学習率:</strong> 最適化の更新幅（大きいほど速いが不安定になる可能性）</li>
                       <li><strong>学習ステップ数:</strong> 最適化の反復回数（多いほど精度が向上）</li>

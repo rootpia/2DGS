@@ -226,7 +226,11 @@ class GaussianSplatting2D():
         return loss
     
     def _calc_loss_l2(self, img_pred: torch.Tensor, img_gt: torch.Tensor) -> torch.Tensor:
-        loss = loss = torch.mean((img_pred - img_gt) ** 2)
+        loss = torch.sum((img_pred - img_gt) ** 2) ** 0.5
+        return loss
+    
+    def _calc_loss_mse(self, img_pred: torch.Tensor, img_gt: torch.Tensor) -> torch.Tensor:
+        loss = F.mse_loss(img_pred, img_gt)
         return loss
 
     async def calculate_async(self, num_steps:int=_NUM_STEPS, opt_lr:float=_LEARNING_RATE, 
@@ -258,6 +262,7 @@ class GaussianSplatting2D():
             img_pred = self._generate_predicted_image()
 
             # 誤差計算
+            print(f"loss_func_name={loss_func_name}")
             method = getattr(self, loss_func_name, None)
             loss = method(img_pred, target_img)
             loss.backward()

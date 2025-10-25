@@ -21,7 +21,7 @@ const ImageProcessingApp = () => {
   const [numSteps, setNumSteps] = useState(10000);
   const [updateInterval, setUpdateInterval] = useState(100);
   const [approximationMethod, setApproximationMethod] = useState('covariance'); // 'variance' or 'covariance'
-  const [lossFunction, setLossFunction] = useState('l1_ssim'); // 'l2' or 'l1_ssim'
+  const [lossFunction, setLossFunction] = useState('l1_ssim'); // 'MSE' or 'l2' or 'l1_ssim'
   
   const fileInputRef = useRef(null);
   const wsRef = useRef(null);
@@ -171,7 +171,10 @@ const ImageProcessingApp = () => {
       addLog('WebSocket接続確立');
       
       // 誤差関数名を決定
-      const lossFuncName = lossFunction === 'l2' ? '_calc_loss_l2' : '_calc_loss_l1_ssim';
+      const lossFuncName = 
+        lossFunction === 'l2' ? '_calc_loss_l2' : 
+        lossFunction === 'l1_ssim' ? '_calc_loss_l1_ssim' : 
+        '_calc_loss_mse';
       
       ws.send(JSON.stringify({
         learning_rate: learningRate,
@@ -435,6 +438,7 @@ const ImageProcessingApp = () => {
                 >
                   <option value="l1_ssim">L1+SSIM</option>
                   <option value="l2">L2</option>
+                  <option value="mse">MSE</option>
                 </select>
               </div>
               <div className="flex items-center gap-2">

@@ -37,6 +37,14 @@ class GaussianSplatting2D():
         print(f"device: {self.device}")
         print(f"save_dir: {self.save_dir}")
 
+    def __del__(self):
+        self.img_org = None
+        self.img_array = None
+        self.pos_for_kernel = None
+        self.params = None
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+
     def initialize(self, input_image:Image, resize_w:int=_TRAIN_IMG_W, resize_h:int=_TRAIN_IMG_H,
                          num_gaussians:int=_NUM_GAUSSIANS):
         """

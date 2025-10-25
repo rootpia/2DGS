@@ -82,7 +82,8 @@ async def initialize_gs(
         new_w = int(new_h * aspect_ratio)
 
         # インスタンス初期化
-        gs_instance = None
+        if gs_instance is not None:
+            del gs_instance
         gs_instance = class_object()
         gs_instance.initialize(pil_image, resize_w:=new_w, resize_h:=new_h,
                                num_gaussians=num_gaussians)

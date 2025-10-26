@@ -1,13 +1,10 @@
 from fastapi import FastAPI, File, UploadFile, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-# import numpy as np
-# from PIL import Image
-import asyncio
 import json
-from typing import Optional
+from typing import Optional, List
 from ImageManager import ImageManager
-from GaussianParam import GaussianParam
+from GaussianParam import GaussianParamsList
 from GaussianSplatting2D import GaussianSplatting2D
 from GaussianSplatting2D_only_variance import GaussianSplatting2D_only_variance
 
@@ -97,24 +94,22 @@ async def get_params():
         raise HTTPException(status_code=500, detail=f"パラメータ取得エラー: {str(e)}")
 
 @app.post("/update-params")
-async def update_params(update_data: list[dict]):
+async def update_params(update_data: GaussianParamsList):
+# async def update_params(update_data: list[dict]):
     """ガウシアンパラメータを更新"""
     global gs_instance
     
-    print("update-param: step0")
     if gs_instance is None or gs_instance.params is None:
         raise HTTPException(status_code=400, detail="GaussianSplattingが初期化されていません")
     
     try:
-        print("update-param: step1")
+        print(f"[UpdateParams] 開始: {num_gaussians}個のガウシアンを更新")
         gs_instance.update_gaussian_params(update_data)
-        print("update-param: step2")
         images = gs_instance.generate_current_images()
-        print("update-param: step3")
         b64img_pred = ImageManager.cv2_to_base64(images["predicted"])
         b64img_predpoint = ImageManager.cv2_to_base64(images["points"])
         num_gaussians = gs_instance.num_gaussians
-        print(f"[UpdateParams] 完了: {num_gaussians}個のガウシアンを更新")
+        print(f"[UpdateParams] 完了")
         return {
             "status": "updated",
             "num_gaussians": num_gaussians,
@@ -127,11 +122,9 @@ async def update_params(update_data: list[dict]):
         raise HTTPException(status_code=500, detail=f"パラメータ更新エラー: {str(e)}")
 
 @app.post("/initialize")
-async def initialize_gs(
-    image: UploadFile = File(...),
-    class_name: str = "GaussianSplatting2D",
-    num_gaussians: int = 1000
-):
+async def initialize_gs(image: UploadFile = File(...),
+                        class_name: str = "GaussianSplatting2D",
+                        num_gaussians: int = 1000):
     """GaussianSplatting2Dの初期化"""
     global gs_instance
     
@@ -192,7 +185,7 @@ async def reinitialize_gs(class_name: str = "GaussianSplatting2D",
         raise ValueError(f"クラス名 '{class_name}' は見つからないか、クラスではありません")
 
     try:
-        print(f"[Reinitialize] 開始: num_gaussians={num_gaussians}")
+        print(f"[Reinitialize] 開始: class={class_name}, num_gaussians={num_gaussians}")
         # クラス(=処理方法)を切替
         if not isinstance(gs_instance, class_object):
             input_image = gs_instance.img_org
@@ -228,7 +221,6 @@ async def websocket_train(websocket: WebSocket):
         # パラメータ受信
         data = await websocket.receive_text()
         params = json.loads(data)
-        
         learning_rate = params.get("learning_rate", 0.01)
         num_steps = params.get("num_steps", 10000)
         update_interval = params.get("update_interval", 100)

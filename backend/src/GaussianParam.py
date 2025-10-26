@@ -9,3 +9,7 @@ class GaussianParam(BaseModel):
     sigma_y: float
     sigma_xy: Optional[float] = None
     weight: float
+
+# フロントエンド -> バックエンドに渡すときにlistだと渡せなかったので…
+class GaussianParamsList(BaseModel):
+    params: list[GaussianParam]

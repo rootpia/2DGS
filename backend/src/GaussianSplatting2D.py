@@ -10,7 +10,7 @@ from PIL import Image
 from torch.distributions import MultivariateNormal
 from pytorch_msssim import SSIM
 from ImageManager import ImageManager
-from GaussianParam import GaussianParam
+from GaussianParam import GaussianParamsList
 
 class GaussianSplatting2D():
     """2DGSによる画像近似"""
@@ -122,11 +122,12 @@ class GaussianSplatting2D():
         # 計算用座標配列も初期化
         self.pos_for_kernel = self._create_pos_for_kernel()
 
-    def update_gaussian_params(self, params:list[GaussianParam]):
+    def update_gaussian_params(self, paramslist:GaussianParamsList):
         """
         ガウシアンパラメタの更新
-        params: ガウシアンパラメタリスト
+        paramslist: ガウシアンパラメタリスト
         """
+        params = paramslist.params
         num_gaussian = len(params)
         self.create_gaussian_params(num_gaussian)
         for idx, param in enumerate(params):

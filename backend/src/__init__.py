@@ -2,5 +2,6 @@
 
 from . import ImageManager
 from . import GaussianParam
+from . import GaussianParamsList
 from . import GaussianSplatting2D
 from . import GaussianSplatting2D_only_variance

@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import asyncio
-from GaussianParam import GaussianParam
+from GaussianParam import GaussianParamsList
 from GaussianSplatting2D import GaussianSplatting2D
 
 class GaussianSplatting2D_only_variance(GaussianSplatting2D):
@@ -45,11 +45,12 @@ class GaussianSplatting2D_only_variance(GaussianSplatting2D):
         # 計算用座標配列も初期化
         self.pos_for_kernel = self._create_pos_for_kernel()
 
-    def update_gaussian_params(self, params:list[GaussianParam]):
+    def update_gaussian_params(self, paramslist:GaussianParamsList):
         """
         ガウシアンパラメタの更新
         params: ガウシアンパラメタリスト
         """
+        params = paramslist.params
         num_gaussian = len(params)
         self.create_gaussian_params(num_gaussian)
         for idx, param in enumerate(params):

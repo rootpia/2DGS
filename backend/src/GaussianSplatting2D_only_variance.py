@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import asyncio
-
+from GaussianParam import GaussianParam
 from GaussianSplatting2D import GaussianSplatting2D
 
 class GaussianSplatting2D_only_variance(GaussianSplatting2D):
@@ -44,6 +44,20 @@ class GaussianSplatting2D_only_variance(GaussianSplatting2D):
 
         # 計算用座標配列も初期化
         self.pos_for_kernel = self._create_pos_for_kernel()
+
+    def update_gaussian_params(self, params:list[GaussianParam]):
+        """
+        ガウシアンパラメタの更新
+        params: ガウシアンパラメタリスト
+        """
+        num_gaussian = len(params)
+        self.create_gaussian_params(num_gaussian)
+        for idx, param in enumerate(params):
+            self.params['means'].data[idx, 0] = param.mean_x
+            self.params['means'].data[idx, 1] = param.mean_y
+            self.params['sigmas'].data[idx, 0] = param.sigma_x
+            self.params['sigmas'].data[idx, 1] = param.sigma_y
+            self.params['weights'].data[idx] = param.weight
 
     def _gaussian_2d_batch(self, means:torch.nn.parameter.Parameter, sigmas:torch.nn.parameter.Parameter) -> torch.Tensor:
         """

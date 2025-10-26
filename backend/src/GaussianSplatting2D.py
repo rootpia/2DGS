@@ -10,6 +10,7 @@ from PIL import Image
 from torch.distributions import MultivariateNormal
 from pytorch_msssim import SSIM
 from ImageManager import ImageManager
+from GaussianParam import GaussianParam
 
 class GaussianSplatting2D():
     """2DGSによる画像近似"""
@@ -43,7 +44,7 @@ class GaussianSplatting2D():
         self.pos_for_kernel = None
         self.params = None
         torch.cuda.empty_cache()
-        torch.cuda.synchronize()
+        # torch.cuda.synchronize()
 
     def initialize(self, input_image:Image, resize_w:int=_TRAIN_IMG_W, resize_h:int=_TRAIN_IMG_H,
                          num_gaussians:int=_NUM_GAUSSIANS):
@@ -120,6 +121,21 @@ class GaussianSplatting2D():
 
         # 計算用座標配列も初期化
         self.pos_for_kernel = self._create_pos_for_kernel()
+
+    def update_gaussian_params(self, params:list[GaussianParam]):
+        """
+        ガウシアンパラメタの更新
+        params: ガウシアンパラメタリスト
+        """
+        num_gaussian = len(params)
+        self.create_gaussian_params(num_gaussian)
+        for idx, param in enumerate(params):
+            self.params['means'].data[idx, 0] = param.mean_x
+            self.params['means'].data[idx, 1] = param.mean_y
+            self.params['sigmas'].data[idx, 0] = param.sigma_x
+            self.params['sigmas'].data[idx, 1] = param.sigma_y
+            self.params['sigmas'].data[idx, 2] = param.sigma_xy
+            self.params['weights'].data[idx] = param.weight
 
     def _gaussian_2d_batch(self, means:torch.nn.parameter.Parameter, sigmas:torch.nn.parameter.Parameter) -> torch.Tensor:
         """

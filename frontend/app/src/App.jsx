@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Upload, Play, Square, Loader2, Cpu, Settings, RefreshCw, HelpCircle, X, List, Save, Download } from 'lucide-react';
+import { Upload, Play, Square, Loader2, Cpu, Settings, RefreshCw, HelpCircle, X, List, Save, Download, FileUp } from 'lucide-react';
 
 const ImageProcessingApp = () => {
   // 状態管理
@@ -28,6 +28,7 @@ const ImageProcessingApp = () => {
   const [lossFunction, setLossFunction] = useState('l1_ssim');
   
   const fileInputRef = useRef(null);
+  const paramFileInputRef = useRef(null);
   const wsRef = useRef(null);
   const logsEndRef = useRef(null);
 
@@ -61,11 +62,11 @@ const ImageProcessingApp = () => {
       const data = await response.json();
       setGaussianParams(data.params);
       setHasCovariance(data.has_covariance);
-      addLog(`パラメータを読み込みました: ${data.num_gaussians}個のガウシアン`);
+      addLog(`パラメタを読み込みました: ${data.num_gaussians}個のガウシアン`);
     } catch (error) {
-      console.error('パラメータ取得エラー:', error);
-      addLog(`パラメータ取得エラー: ${error.message}`);
-      alert('パラメータの取得に失敗しました。');
+      console.error('パラメタ取得エラー:', error);
+      addLog(`パラメタ取得エラー: ${error.message}`);
+      alert('パラメタの取得に失敗しました。');
     } finally {
       setLoadingParams(false);
     }
@@ -89,12 +90,12 @@ const ImageProcessingApp = () => {
       const data = await response.json();
       setPredictedImage(`data:image/png;base64,${data.predicted_image}`);
       setPointsImage(`data:image/png;base64,${data.points_image}`);
-      addLog(`パラメータを更新しました: ${data.num_gaussians}個のガウシアン`);
+      addLog(`パラメタを更新しました: ${data.num_gaussians}個のガウシアン`);
       setShowParams(false);
     } catch (error) {
-      console.error('パラメータ更新エラー:', error);
-      addLog(`パラメータ更新エラー: ${error.message}`);
-      alert('パラメータの更新に失敗しました。');
+      console.error('パラメタ更新エラー:', error);
+      addLog(`パラメタ更新エラー: ${error.message}`);
+      alert('パラメタの更新に失敗しました。');
     } finally {
       setLoadingParams(false);
     }
@@ -126,11 +127,93 @@ const ImageProcessingApp = () => {
     a.download = 'gaussian_params.csv';
     a.click();
     URL.revokeObjectURL(url);
+    addLog('パラメタをCSVファイルにエクスポートしました');
+  };
+
+  const importParamsFromCSV = (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      try {
+        const text = e.target.result;
+        const lines = text.split('\n').filter(line => line.trim());
+        const headers = lines[0].split(',');
+        
+        // ヘッダーから共分散の有無を判定
+        const hasSigmaXY = headers.includes('sigma_xy');
+        
+        const params = [];
+        for (let i = 1; i < lines.length; i++) {
+          const values = lines[i].split(',');
+          if (values.length < 6) continue;
+          
+          const param = {
+            index: parseInt(values[0]),
+            mean_x: parseFloat(values[1]),
+            mean_y: parseFloat(values[2]),
+            sigma_x: parseFloat(values[3]),
+            sigma_y: parseFloat(values[4]),
+            weight: parseFloat(values[hasSigmaXY ? 6 : 5])
+          };
+          
+          if (hasSigmaXY) {
+            param.sigma_xy = parseFloat(values[5]);
+          }
+          
+          params.push(param);
+        }
+        
+        if (params.length === 0) {
+          throw new Error('有効なパラメタが見つかりませんでした');
+        }
+        
+        // パラメタを設定
+        setGaussianParams(params);
+        setHasCovariance(hasSigmaXY);
+        
+        // バックエンドに送信して画像更新
+        setLoadingParams(true);
+        const response = await fetch('http://localhost:18000/update-params', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ params }),
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        addLog(`TODO: step4`);
+
+        const data = await response.json();
+        setPredictedImage(`data:image/png;base64,${data.predicted_image}`);
+        setPointsImage(`data:image/png;base64,${data.points_image}`);
+        
+        // ガウシアン数を更新
+        setNumGaussians(params.length);
+        
+        addLog(`CSVファイルからパラメタをインポートしました: ${params.length}個のガウシアン`);
+        setShowParams(false);
+        
+      } catch (error) {
+        console.error('CSVインポートエラー:', error);
+        addLog(`CSVインポートエラー: ${error.message}`);
+        alert('CSVファイルの読み込みに失敗しました。');
+      } finally {
+        setLoadingParams(false);
+      }
+    };
+    
+    reader.readAsText(file);
+    event.target.value = '';
   };
 
   const initializeWithImage = async (file) => {
     setAppState('loading');
-    addLog(`画像初期化開始: 近似方法=${approximationMethod === 'variance' ? '分散' : '分散共分散'}, ガウシアン数=${numGaussians}`);
+    addLog(`画像初期化開始: ガウシアン数=${numGaussians}, 近似方法=${approximationMethod === 'variance' ? '分散' : '分散共分散'}`);
 
     try {
       const formData = new FormData();
@@ -198,15 +281,12 @@ const ImageProcessingApp = () => {
     setTotalSteps(0);
     setCurrentLoss(null);
     
-    addLog(`パラメタ再適用: 近似方法=${approximationMethod === 'variance' ? '分散' : '分散共分散'}, ガウシアン数=${numGaussians}`);
+    addLog(`パラメタ再適用: ガウシアン数=${numGaussians}`);
     
     const scrollY = window.scrollY;
-    const className = approximationMethod === 'variance' 
-      ? 'GaussianSplatting2D_only_variance' 
-      : 'GaussianSplatting2D';
-
+    
     try {
-      const response = await fetch(`http://localhost:18000/reinitialize?class_name=${className}&num_gaussians=${numGaussians}`, {
+      const response = await fetch(`http://localhost:18000/reinitialize?num_gaussians=${numGaussians}`, {
         method: 'POST',
       });
 
@@ -236,12 +316,12 @@ const ImageProcessingApp = () => {
     if (appState !== 'loaded' && appState !== 'paused') return;
 
     if (currentFile) {
-      addLog(`パラメータ確認: ガウシアン数=${numGaussians}`);
+      addLog(`パラメタ確認: ガウシアン数=${numGaussians}`);
       await handleReinitialize();
     }
 
     setAppState('training');
-    addLog(`学習開始: 近似方法=${approximationMethod === 'variance' ? '分散' : '分散共分散'}, 誤差関数=${lossFunction === 'l2' ? 'L2' : 'L1+SSIM'}, ガウシアン数=${numGaussians}, LR=${learningRate}, Steps=${numSteps}, 更新間隔=${updateInterval}`);
+    addLog(`学習開始: ガウシアン数=${numGaussians}, LR=${learningRate}, Steps=${numSteps}, 更新間隔=${updateInterval}, 誤差関数=${lossFunction === 'l2' ? 'L2' : 'L1+SSIM'}`);
     setCurrentStep(0);
     setTotalSteps(numSteps);
 
@@ -464,7 +544,7 @@ const ImageProcessingApp = () => {
                     disabled={appState === 'training'}
                   >
                     <List className="w-4 h-4" />
-                    パラメタ編集
+                    パラメタ表示
                   </button>
                 )}
               </div>
@@ -485,9 +565,9 @@ const ImageProcessingApp = () => {
           </div>
         </div>
 
-        {/* 下段：パラメータ/コントロール + ログ + プログレスバー */}
+        {/* 下段：パラメタ/コントロール + ログ + プログレスバー */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mt-4">
-          {/* 左列：パラメータ設定＆学習コントロール */}
+          {/* 左列：パラメタ設定＆学習コントロール */}
           <div className="bg-white rounded-xl shadow-lg p-4">
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-xl font-semibold flex items-center gap-2">
@@ -691,7 +771,7 @@ const ImageProcessingApp = () => {
           </div>
         </div>
 
-        {/* パラメータ表示モーダル */}
+        {/* パラメタ表示モーダル */}
         {showParams && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
             <div className="bg-white rounded-xl shadow-2xl max-w-6xl w-full max-h-[90vh] flex flex-col">
@@ -702,11 +782,25 @@ const ImageProcessingApp = () => {
                 </h3>
                 <div className="flex items-center gap-2">
                   <button
+                    onClick={() => paramFileInputRef.current?.click()}
+                    className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg transition-colors flex items-center gap-2"
+                  >
+                    <FileUp className="w-4 h-4" />
+                    インポート
+                  </button>
+                  <input
+                    ref={paramFileInputRef}
+                    type="file"
+                    accept=".csv"
+                    onChange={importParamsFromCSV}
+                    className="hidden"
+                  />
+                  <button
                     onClick={exportParamsAsCSV}
                     className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg transition-colors flex items-center gap-2"
                   >
                     <Download className="w-4 h-4" />
-                    CSV出力
+                    エクスポート
                   </button>
                   <button
                     onClick={() => setShowParams(false)}
@@ -833,7 +927,7 @@ const ImageProcessingApp = () => {
                     ) : (
                       <>
                         <Save className="w-4 h-4" />
-                        パラメータを適用
+                        パラメタを適用
                       </>
                     )}
                   </button>
@@ -864,16 +958,16 @@ const ImageProcessingApp = () => {
                   <div className="bg-blue-50 border-l-4 border-blue-500 p-4 rounded">
                     <h4 className="font-semibold text-blue-800 mb-2">📝 基本的な流れ</h4>
                     <ol className="list-decimal list-inside space-y-2 text-sm">
-                      <li>パラメータを設定してください（ガウシアン数、学習率、ステップ数、更新間隔）</li>
+                      <li>パラメタを設定してください（ガウシアン数、学習率、ステップ数、更新間隔）</li>
                       <li>画像をアップロードすると、GaussianSplattingの初期化が行われます</li>
-                      <li>「実行」ボタンで最適化計算を開始します（自動的に最新パラメータで再初期化されます）</li>
+                      <li>「実行」ボタンで最適化計算を開始します（自動的に最新パラメタで再初期化されます）</li>
                       <li>学習中は中央と右側の画像がリアルタイムで更新されます</li>
                       <li>「学習中断」ボタンでいつでも処理を停止できます</li>
                     </ol>
                   </div>
                   
                   <div className="bg-green-50 border-l-4 border-green-500 p-4 rounded">
-                    <h4 className="font-semibold text-green-800 mb-2">⚙️ パラメータ説明</h4>
+                    <h4 className="font-semibold text-green-800 mb-2">⚙️ パラメタ説明</h4>
                     <ul className="space-y-2 text-sm">
                       <li><strong>近似方法:</strong> ガウシアンの表現方法（分散のみ or 分散共分散行列）</li>
                       <li><strong>誤差関数:</strong> 学習に使用する損失関数（L2 or L1+SSIM）</li>
@@ -894,18 +988,18 @@ const ImageProcessingApp = () => {
                   </div>
                   
                   <div className="bg-indigo-50 border-l-4 border-indigo-500 p-4 rounded">
-                    <h4 className="font-semibold text-indigo-800 mb-2">📊 パラメータ表示機能</h4>
+                    <h4 className="font-semibold text-indigo-800 mb-2">📊 パラメタ表示機能</h4>
                     <ul className="space-y-2 text-sm">
-                      <li>「パラメタ編集」ボタンで現在のガウシアンパラメタを確認できます</li>
-                      <li>各パラメータは編集可能で、「パラメータを適用」で即座に反映されます</li>
-                      <li>「CSV出力」ボタンでパラメータをCSVファイルとしてダウンロードできます</li>
+                      <li>「パラメタ表示」ボタンで現在のガウシアンパラメタを確認できます</li>
+                      <li>各パラメタは編集可能で、「パラメタを適用」で即座に反映されます</li>
+                      <li>「CSV出力」ボタンでパラメタをCSVファイルとしてダウンロードできます</li>
                     </ul>
                   </div>
                   
                   <div className="bg-yellow-50 border-l-4 border-yellow-500 p-4 rounded">
                     <h4 className="font-semibold text-yellow-800 mb-2">💡 Tips</h4>
                     <ul className="space-y-2 text-sm">
-                      <li>パラメータ変更後は「再初期化」ボタンで即座に反映できます</li>
+                      <li>パラメタ変更後は「再初期化」ボタンで即座に反映できます</li>
                       <li>学習中でも「学習中断」でいつでも停止可能です</li>
                       <li>処理ログで学習の進捗とLoss値を確認できます</li>
                       <li>GPU使用時は大幅に高速化されます（デバイス情報を確認）</li>

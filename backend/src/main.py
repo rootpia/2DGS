@@ -95,7 +95,6 @@ async def get_params():
 
 @app.post("/update-params")
 async def update_params(update_data: GaussianParamsList):
-# async def update_params(update_data: list[dict]):
     """ガウシアンパラメータを更新"""
     global gs_instance
     
@@ -103,12 +102,12 @@ async def update_params(update_data: GaussianParamsList):
         raise HTTPException(status_code=400, detail="GaussianSplattingが初期化されていません")
     
     try:
-        print(f"[UpdateParams] 開始: {num_gaussians}個のガウシアンを更新")
+        num_gaussians = len(update_data.params)
+        print(f"[UpdateParams] 開始: {num_gaussians}個のガウシアン更新を実行")
         gs_instance.update_gaussian_params(update_data)
         images = gs_instance.generate_current_images()
         b64img_pred = ImageManager.cv2_to_base64(images["predicted"])
         b64img_predpoint = ImageManager.cv2_to_base64(images["points"])
-        num_gaussians = gs_instance.num_gaussians
         print(f"[UpdateParams] 完了")
         return {
             "status": "updated",

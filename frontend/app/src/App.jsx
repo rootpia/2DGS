@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+// import ConfirmationModal from './ConfirmationModal';
 import { Upload, Play, Square, Loader2, Cpu, Settings, RefreshCw, HelpCircle, X, List, Save, Download, FileUp } from 'lucide-react';
 
 const ImageProcessingApp = () => {
@@ -315,10 +316,11 @@ const ImageProcessingApp = () => {
   const startTraining = async () => {
     if (appState !== 'loaded' && appState !== 'paused') return;
 
-    if (currentFile) {
-      addLog(`パラメタ確認: ガウシアン数=${numGaussians}`);
-      await handleReinitialize();
-    }
+    // TODO: メッセージボックスでユーザが実行有無を選択するようにしたい
+    // if (currentFile) {
+    //   addLog(`パラメタ確認: ガウシアン数=${numGaussians}`);
+    //   await handleReinitialize();
+    // }
 
     setAppState('training');
     addLog(`学習開始: ガウシアン数=${numGaussians}, LR=${learningRate}, Steps=${numSteps}, 更新間隔=${updateInterval}, 誤差関数=${lossFunction === 'l2' ? 'L2' : 'L1+SSIM'}`);

@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Upload, Play, Square, Loader2, Cpu, Settings, RefreshCw, HelpCircle, X } from 'lucide-react';
+import { Upload, Play, Square, Loader2, Cpu, Settings, RefreshCw, HelpCircle, X, List, Save, Download } from 'lucide-react';
 
 const ImageProcessingApp = () => {
   // 状態管理
@@ -14,14 +14,18 @@ const ImageProcessingApp = () => {
   const [currentLoss, setCurrentLoss] = useState(null);
   const [currentFile, setCurrentFile] = useState(null);
   const [showHelp, setShowHelp] = useState(false);
+  const [showParams, setShowParams] = useState(false);
+  const [gaussianParams, setGaussianParams] = useState([]);
+  const [hasCovariance, setHasCovariance] = useState(true);
+  const [loadingParams, setLoadingParams] = useState(false);
   
-  // パラメータ
+  // パラメタ
   const [numGaussians, setNumGaussians] = useState(1000);
   const [learningRate, setLearningRate] = useState(0.01);
   const [numSteps, setNumSteps] = useState(10000);
   const [updateInterval, setUpdateInterval] = useState(100);
-  const [approximationMethod, setApproximationMethod] = useState('covariance'); // 'variance' or 'covariance'
-  const [lossFunction, setLossFunction] = useState('l1_ssim'); // 'MSE' or 'l2' or 'l1_ssim'
+  const [approximationMethod, setApproximationMethod] = useState('covariance');
+  const [lossFunction, setLossFunction] = useState('l1_ssim');
   
   const fileInputRef = useRef(null);
   const wsRef = useRef(null);
@@ -35,7 +39,7 @@ const ImageProcessingApp = () => {
       .catch(err => console.error('デバイス情報取得エラー:', err));
   }, []);
 
-  // ログ自動スクロール - 処理ログ内のみでスクロール
+  // ログ自動スクロール
   useEffect(() => {
     if (logsEndRef.current) {
       logsEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -47,16 +51,92 @@ const ImageProcessingApp = () => {
     setLogs(prev => [...prev, `[${timestamp}] ${message}`]);
   };
 
+  const loadGaussianParams = async () => {
+    setLoadingParams(true);
+    try {
+      const response = await fetch('http://localhost:18000/get-params');
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      const data = await response.json();
+      setGaussianParams(data.params);
+      setHasCovariance(data.has_covariance);
+      addLog(`パラメータを読み込みました: ${data.num_gaussians}個のガウシアン`);
+    } catch (error) {
+      console.error('パラメータ取得エラー:', error);
+      addLog(`パラメータ取得エラー: ${error.message}`);
+      alert('パラメータの取得に失敗しました。');
+    } finally {
+      setLoadingParams(false);
+    }
+  };
+
+  const updateGaussianParams = async () => {
+    setLoadingParams(true);
+    try {
+      const response = await fetch('http://localhost:18000/update-params', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ params: gaussianParams }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const data = await response.json();
+      setPredictedImage(`data:image/png;base64,${data.predicted_image}`);
+      setPointsImage(`data:image/png;base64,${data.points_image}`);
+      addLog(`パラメータを更新しました: ${data.num_gaussians}個のガウシアン`);
+      setShowParams(false);
+    } catch (error) {
+      console.error('パラメータ更新エラー:', error);
+      addLog(`パラメータ更新エラー: ${error.message}`);
+      alert('パラメータの更新に失敗しました。');
+    } finally {
+      setLoadingParams(false);
+    }
+  };
+
+  const handleParamChange = (index, field, value) => {
+    setGaussianParams(prev => {
+      const updated = [...prev];
+      updated[index] = { ...updated[index], [field]: parseFloat(value) };
+      return updated;
+    });
+  };
+
+  const exportParamsAsCSV = () => {
+    let csv = hasCovariance 
+      ? 'index,mean_x,mean_y,sigma_x,sigma_y,sigma_xy,weight\n'
+      : 'index,mean_x,mean_y,sigma_x,sigma_y,weight\n';
+    
+    gaussianParams.forEach(param => {
+      csv += hasCovariance
+        ? `${param.index},${param.mean_x},${param.mean_y},${param.sigma_x},${param.sigma_y},${param.sigma_xy},${param.weight}\n`
+        : `${param.index},${param.mean_x},${param.mean_y},${param.sigma_x},${param.sigma_y},${param.weight}\n`;
+    });
+
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'gaussian_params.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const initializeWithImage = async (file) => {
     setAppState('loading');
-    addLog(`画像初期化開始: ガウシアン数=${numGaussians}, 近似方法=${approximationMethod === 'variance' ? '分散' : '分散共分散'}`);
+    addLog(`画像初期化開始: 近似方法=${approximationMethod === 'variance' ? '分散' : '分散共分散'}, ガウシアン数=${numGaussians}`);
 
     try {
       const formData = new FormData();
       formData.append('image', file);
       formData.append('num_gaussians', numGaussians);
       
-      // 近似方法に応じてクラス名を決定
       const className = approximationMethod === 'variance' 
         ? 'GaussianSplatting2D_only_variance' 
         : 'GaussianSplatting2D';
@@ -118,13 +198,15 @@ const ImageProcessingApp = () => {
     setTotalSteps(0);
     setCurrentLoss(null);
     
-    addLog(`パラメータ再適用: ガウシアン数=${numGaussians}`);
+    addLog(`パラメタ再適用: 近似方法=${approximationMethod === 'variance' ? '分散' : '分散共分散'}, ガウシアン数=${numGaussians}`);
     
     const scrollY = window.scrollY;
+    const className = approximationMethod === 'variance' 
+      ? 'GaussianSplatting2D_only_variance' 
+      : 'GaussianSplatting2D';
 
-    
     try {
-      const response = await fetch(`http://localhost:18000/reinitialize?num_gaussians=${numGaussians}`, {
+      const response = await fetch(`http://localhost:18000/reinitialize?class_name=${className}&num_gaussians=${numGaussians}`, {
         method: 'POST',
       });
 
@@ -153,14 +235,13 @@ const ImageProcessingApp = () => {
   const startTraining = async () => {
     if (appState !== 'loaded' && appState !== 'paused') return;
 
-    // パラメータが変更されている可能性があるので再初期化
     if (currentFile) {
       addLog(`パラメータ確認: ガウシアン数=${numGaussians}`);
       await handleReinitialize();
     }
 
     setAppState('training');
-    addLog(`学習開始: ガウシアン数=${numGaussians}, LR=${learningRate}, Steps=${numSteps}, 更新間隔=${updateInterval}, 誤差関数=${lossFunction === 'l2' ? 'L2' : 'L1+SSIM'}`);
+    addLog(`学習開始: 近似方法=${approximationMethod === 'variance' ? '分散' : '分散共分散'}, 誤差関数=${lossFunction === 'l2' ? 'L2' : 'L1+SSIM'}, ガウシアン数=${numGaussians}, LR=${learningRate}, Steps=${numSteps}, 更新間隔=${updateInterval}`);
     setCurrentStep(0);
     setTotalSteps(numSteps);
 
@@ -170,7 +251,6 @@ const ImageProcessingApp = () => {
     ws.onopen = () => {
       addLog('WebSocket接続確立');
       
-      // 誤差関数名を決定
       const lossFuncName = 
         lossFunction === 'l2' ? '_calc_loss_l2' : 
         lossFunction === 'l1_ssim' ? '_calc_loss_l1_ssim' : 
@@ -214,7 +294,6 @@ const ImageProcessingApp = () => {
 
     ws.onclose = () => {
       addLog('WebSocket接続終了');
-      // WebSocket切断時は状態を変更しない（学習完了/中断で既に変更済み）
     };
   };
 
@@ -371,9 +450,24 @@ const ImageProcessingApp = () => {
           {/* 右列：ガウシアンポイント */}
           <div className="space-y-4">
             <div className="bg-white rounded-xl shadow-lg p-4">
-              <h2 className="text-xl font-semibold mb-2 text-gray-700">
-                Gaussian Points
-              </h2>
+              <div className="flex items-center justify-between mb-2">
+                <h2 className="text-xl font-semibold text-gray-700">
+                  Gaussian Points
+                </h2>
+                {pointsImage && (
+                  <button
+                    onClick={() => {
+                      setShowParams(true);
+                      loadGaussianParams();
+                    }}
+                    className="bg-indigo-500 hover:bg-indigo-600 text-white px-4 py-1 rounded-lg transition-colors text-sm flex items-center gap-1"
+                    disabled={appState === 'training'}
+                  >
+                    <List className="w-4 h-4" />
+                    パラメタ編集
+                  </button>
+                )}
+              </div>
               <div className="border-2 border-gray-200 rounded-lg aspect-square flex items-center justify-center bg-gray-50 overflow-hidden">
                 {pointsImage ? (
                   <img 
@@ -597,6 +691,158 @@ const ImageProcessingApp = () => {
           </div>
         </div>
 
+        {/* パラメータ表示モーダル */}
+        {showParams && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-xl shadow-2xl max-w-6xl w-full max-h-[90vh] flex flex-col">
+              <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
+                <h3 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
+                  <List className="w-6 h-6 text-indigo-500" />
+                  ガウシアンパラメタ {hasCovariance ? '(分散共分散)' : '(分散のみ)'}
+                </h3>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={exportParamsAsCSV}
+                    className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg transition-colors flex items-center gap-2"
+                  >
+                    <Download className="w-4 h-4" />
+                    CSV出力
+                  </button>
+                  <button
+                    onClick={() => setShowParams(false)}
+                    className="text-gray-400 hover:text-gray-600 transition-colors"
+                  >
+                    <X className="w-6 h-6" />
+                  </button>
+                </div>
+              </div>
+              
+              <div className="flex-1 overflow-y-auto p-6">
+                {loadingParams ? (
+                  <div className="flex items-center justify-center py-12">
+                    <Loader2 className="w-8 h-8 text-indigo-500 animate-spin" />
+                    <span className="ml-3 text-gray-600">読み込み中...</span>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm border-collapse">
+                      <thead className="bg-gray-100 sticky top-0">
+                        <tr>
+                          <th className="border border-gray-300 px-3 py-2 text-left font-semibold">Index</th>
+                          <th className="border border-gray-300 px-3 py-2 text-left font-semibold">Mean X</th>
+                          <th className="border border-gray-300 px-3 py-2 text-left font-semibold">Mean Y</th>
+                          <th className="border border-gray-300 px-3 py-2 text-left font-semibold">Sigma X</th>
+                          <th className="border border-gray-300 px-3 py-2 text-left font-semibold">Sigma Y</th>
+                          {hasCovariance && (
+                            <th className="border border-gray-300 px-3 py-2 text-left font-semibold">Sigma XY</th>
+                          )}
+                          <th className="border border-gray-300 px-3 py-2 text-left font-semibold">Weight</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {gaussianParams.map((param) => (
+                          <tr key={param.index} className="hover:bg-gray-50">
+                            <td className="border border-gray-300 px-3 py-2">{param.index}</td>
+                            <td className="border border-gray-300 px-1 py-1">
+                              <input
+                                type="number"
+                                value={param.mean_x.toFixed(4)}
+                                onChange={(e) => handleParamChange(param.index, 'mean_x', e.target.value)}
+                                className="w-full px-2 py-1 border border-gray-200 rounded focus:ring-2 focus:ring-indigo-500 text-xs"
+                                step="0.1"
+                              />
+                            </td>
+                            <td className="border border-gray-300 px-1 py-1">
+                              <input
+                                type="number"
+                                value={param.mean_y.toFixed(4)}
+                                onChange={(e) => handleParamChange(param.index, 'mean_y', e.target.value)}
+                                className="w-full px-2 py-1 border border-gray-200 rounded focus:ring-2 focus:ring-indigo-500 text-xs"
+                                step="0.1"
+                              />
+                            </td>
+                            <td className="border border-gray-300 px-1 py-1">
+                              <input
+                                type="number"
+                                value={param.sigma_x.toFixed(4)}
+                                onChange={(e) => handleParamChange(param.index, 'sigma_x', e.target.value)}
+                                className="w-full px-2 py-1 border border-gray-200 rounded focus:ring-2 focus:ring-indigo-500 text-xs"
+                                step="0.1"
+                              />
+                            </td>
+                            <td className="border border-gray-300 px-1 py-1">
+                              <input
+                                type="number"
+                                value={param.sigma_y.toFixed(4)}
+                                onChange={(e) => handleParamChange(param.index, 'sigma_y', e.target.value)}
+                                className="w-full px-2 py-1 border border-gray-200 rounded focus:ring-2 focus:ring-indigo-500 text-xs"
+                                step="0.1"
+                              />
+                            </td>
+                            {hasCovariance && (
+                              <td className="border border-gray-300 px-1 py-1">
+                                <input
+                                  type="number"
+                                  value={param.sigma_xy?.toFixed(4) || '0'}
+                                  onChange={(e) => handleParamChange(param.index, 'sigma_xy', e.target.value)}
+                                  className="w-full px-2 py-1 border border-gray-200 rounded focus:ring-2 focus:ring-indigo-500 text-xs"
+                                  step="0.1"
+                                />
+                              </td>
+                            )}
+                            <td className="border border-gray-300 px-1 py-1">
+                              <input
+                                type="number"
+                                value={param.weight.toFixed(4)}
+                                onChange={(e) => handleParamChange(param.index, 'weight', e.target.value)}
+                                className="w-full px-2 py-1 border border-gray-200 rounded focus:ring-2 focus:ring-indigo-500 text-xs"
+                                step="0.01"
+                                min="0"
+                                max="1"
+                              />
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+              
+              <div className="sticky bottom-0 bg-white border-t border-gray-200 px-6 py-4 flex items-center justify-between">
+                <div className="text-sm text-gray-600">
+                  全 {gaussianParams.length} 個のガウシアン
+                </div>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setShowParams(false)}
+                    className="bg-gray-500 hover:bg-gray-600 text-white px-6 py-2 rounded-lg transition-colors"
+                  >
+                    キャンセル
+                  </button>
+                  <button
+                    onClick={updateGaussianParams}
+                    disabled={loadingParams}
+                    className="bg-indigo-500 hover:bg-indigo-600 text-white px-6 py-2 rounded-lg transition-colors flex items-center gap-2 font-semibold disabled:opacity-50"
+                  >
+                    {loadingParams ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        更新中...
+                      </>
+                    ) : (
+                      <>
+                        <Save className="w-4 h-4" />
+                        パラメータを適用
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* ヘルプモーダル */}
         {showHelp && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -644,6 +890,15 @@ const ImageProcessingApp = () => {
                       <li><strong>Original Image:</strong> アップロードされた元画像</li>
                       <li><strong>Predicted Image:</strong> ガウシアンで近似された予測画像</li>
                       <li><strong>Gaussian Points:</strong> 各ガウシアンの中心位置を赤点で表示</li>
+                    </ul>
+                  </div>
+                  
+                  <div className="bg-indigo-50 border-l-4 border-indigo-500 p-4 rounded">
+                    <h4 className="font-semibold text-indigo-800 mb-2">📊 パラメータ表示機能</h4>
+                    <ul className="space-y-2 text-sm">
+                      <li>「パラメタ編集」ボタンで現在のガウシアンパラメタを確認できます</li>
+                      <li>各パラメータは編集可能で、「パラメータを適用」で即座に反映されます</li>
+                      <li>「CSV出力」ボタンでパラメータをCSVファイルとしてダウンロードできます</li>
                     </ul>
                   </div>
                   

@@ -5,14 +5,15 @@ import numpy as np
 from PIL import Image
 import asyncio
 import json
-from typing import Optional
+from typing import Optional, List
+import torch
 from ImageManager import ImageManager
 from GaussianSplatting2D import GaussianSplatting2D
 from GaussianSplatting2D_only_variance import GaussianSplatting2D_only_variance
 
 # Global
 APP_VERSION = "2.0.0"
-app = FastAPI(title="2dgs_API", version=APP_VERSION)
+app = FastAPI(title="2DGS_API", version=APP_VERSION)
 
 # CORS設定
 app.add_middleware(
@@ -32,6 +33,18 @@ class GSParams(BaseModel):
     num_gaussians: int = 1000
     learning_rate: float = 0.01
     num_steps: int = 10000
+
+class GaussianParam(BaseModel):
+    index: int
+    mean_x: float
+    mean_y: float
+    sigma_x: float
+    sigma_y: float
+    sigma_xy: Optional[float] = None
+    weight: float
+
+class UpdateGaussianParams(BaseModel):
+    params: List[GaussianParam]
 
 @app.get("/")
 async def root():
@@ -54,6 +67,109 @@ async def device_info():
         "device": "GPU" if device.type == "cuda" else "CPU",
         "device_name": str(device)
     }
+
+@app.get("/get-params")
+async def get_params():
+    """現在のガウシアンパラメータを取得"""
+    global gs_instance
+    
+    if gs_instance is None or gs_instance.params is None:
+        raise HTTPException(status_code=400, detail="GaussianSplattingが初期化されていません")
+    
+    try:
+        means = gs_instance.params['means'].cpu().detach().numpy()
+        sigmas = gs_instance.params['sigmas'].cpu().detach().numpy() if isinstance(gs_instance.params['sigmas'], torch.nn.Parameter) else gs_instance.params['sigmas'].cpu().numpy()
+        weights = gs_instance.params['weights'].cpu().detach().numpy()
+        
+        # 共分散ありかなしかを判定
+        has_covariance = sigmas.shape[1] == 3
+        
+        params_list = []
+        for i in range(len(means)):
+            param = {
+                "index": i,
+                "mean_x": float(means[i, 0]),
+                "mean_y": float(means[i, 1]),
+                "sigma_x": float(sigmas[i, 0]),
+                "sigma_y": float(sigmas[i, 1]),
+                "weight": float(weights[i])
+            }
+            if has_covariance:
+                param["sigma_xy"] = float(sigmas[i, 2])
+            params_list.append(param)
+        
+        return {
+            "num_gaussians": len(means),
+            "has_covariance": has_covariance,
+            "params": params_list
+        }
+        
+    except Exception as e:
+        print(f"[GetParams] エラー: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"パラメータ取得エラー: {str(e)}")
+
+@app.post("/update-params")
+async def update_params(update_data: UpdateGaussianParams):
+    """ガウシアンパラメータを更新"""
+    global gs_instance
+    
+    if gs_instance is None or gs_instance.params is None:
+        raise HTTPException(status_code=400, detail="GaussianSplattingが初期化されていません")
+    
+    try:
+        import torch
+        
+        params_list = update_data.params
+        num_gaussians = len(params_list)
+        
+        # 新しいパラメータ配列を作成
+        new_means = torch.zeros((num_gaussians, 2), dtype=torch.float32, device=gs_instance.device)
+        new_weights = torch.zeros(num_gaussians, dtype=torch.float32, device=gs_instance.device)
+        
+        # 共分散ありかなしかを判定
+        has_covariance = params_list[0].sigma_xy is not None
+        
+        if has_covariance:
+            new_sigmas = torch.zeros((num_gaussians, 3), dtype=torch.float32, device=gs_instance.device)
+        else:
+            new_sigmas = torch.zeros((num_gaussians, 2), dtype=torch.float32, device=gs_instance.device)
+        
+        # パラメータを設定
+        for param in params_list:
+            idx = param.index
+            new_means[idx, 0] = param.mean_x
+            new_means[idx, 1] = param.mean_y
+            new_sigmas[idx, 0] = param.sigma_x
+            new_sigmas[idx, 1] = param.sigma_y
+            if has_covariance and param.sigma_xy is not None:
+                new_sigmas[idx, 2] = param.sigma_xy
+            new_weights[idx] = param.weight
+        
+        # パラメータを更新
+        gs_instance.params['means'].data = new_means
+        if isinstance(gs_instance.params['sigmas'], torch.nn.Parameter):
+            gs_instance.params['sigmas'].data = new_sigmas
+        else:
+            gs_instance.params['sigmas'] = new_sigmas
+        gs_instance.params['weights'].data = new_weights
+        
+        # 更新後の画像を生成
+        images = gs_instance.generate_current_images()
+        b64img_pred = ImageManager.cv2_to_base64(images["predicted"])
+        b64img_predpoint = ImageManager.cv2_to_base64(images["points"])
+        
+        print(f"[UpdateParams] 完了: {num_gaussians}個のガウシアンを更新")
+        
+        return {
+            "status": "updated",
+            "num_gaussians": num_gaussians,
+            "predicted_image": b64img_pred,
+            "points_image": b64img_predpoint
+        }
+        
+    except Exception as e:
+        print(f"[UpdateParams] エラー: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"パラメータ更新エラー: {str(e)}")
 
 @app.post("/initialize")
 async def initialize_gs(
@@ -85,7 +201,7 @@ async def initialize_gs(
         if gs_instance is not None:
             del gs_instance
         gs_instance = class_object()
-        gs_instance.initialize(pil_image, resize_w:=new_w, resize_h:=new_h,
+        gs_instance.initialize(pil_image, resize_w=new_w, resize_h=new_h,
                                num_gaussians=num_gaussians)
         initial_images = gs_instance.generate_current_images()
 
@@ -126,11 +242,11 @@ async def reinitialize_gs(class_name: str = "GaussianSplatting2D",
         resize_w, resize_h = input_image.size
         num_gaussians = num_gaussians
         gs_instance = class_object()
-        gs_instance.initialize(input_image:=input_image,
-                            resize_w:=resize_w, resize_h:=resize_h, num_gaussians:=num_gaussians)
+        gs_instance.initialize(input_image=input_image,
+                            resize_w=resize_w, resize_h=resize_h, num_gaussians=num_gaussians)
 
     try:
-        print(f"[Reinitialize] 開始: num_gaussians={num_gaussians}")
+        print(f"[Reinitialize] 開始: class={class_name}, num_gaussians={num_gaussians}")
         gs_instance.create_gaussian_params(num_gaussians)
         initial_images = gs_instance.generate_current_images()
         b64img_pred = ImageManager.cv2_to_base64(initial_images["predicted"])

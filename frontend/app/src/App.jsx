@@ -1,6 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
-// import ConfirmationModal from './ConfirmationModal';
-import { Upload, Play, Square, Loader2, Cpu, Settings, RefreshCw, HelpCircle, X, List, Save, Download, FileUp } from 'lucide-react';
+import Header from './components/Header';
+import ImageDisplay from './components/ImageDisplay';
+import ParameterSettings from './components/ParameterSettings';
+import ProcessStatus from './components/ProcessStatus';
+import ParamsModal from './components/ParamsModal';
+import HelpModal from './components/HelpModal';
 
 const ImageProcessingApp = () => {
   // 状態管理
@@ -29,7 +33,6 @@ const ImageProcessingApp = () => {
   const [lossFunction, setLossFunction] = useState('l1_ssim');
   
   const fileInputRef = useRef(null);
-  const paramFileInputRef = useRef(null);
   const wsRef = useRef(null);
   const logsEndRef = useRef(null);
 
@@ -53,6 +56,7 @@ const ImageProcessingApp = () => {
     setLogs(prev => [...prev, `[${timestamp}] ${message}`]);
   };
 
+  // ガウシアンパラメタ取得
   const loadGaussianParams = async () => {
     setLoadingParams(true);
     try {
@@ -73,6 +77,7 @@ const ImageProcessingApp = () => {
     }
   };
 
+  // ガウシアンパラメタ更新
   const updateGaussianParams = async () => {
     setLoadingParams(true);
     try {
@@ -102,6 +107,7 @@ const ImageProcessingApp = () => {
     }
   };
 
+  // パラメタ編集画面のパラメタ変更
   const handleParamChange = (index, field, value) => {
     setGaussianParams(prev => {
       const updated = [...prev];
@@ -110,6 +116,7 @@ const ImageProcessingApp = () => {
     });
   };
 
+  // パラメタのCSVエクスポート
   const exportParamsAsCSV = () => {
     let csv = hasCovariance 
       ? 'index,mean_x,mean_y,sigma_x,sigma_y,sigma_xy,weight\n'
@@ -131,6 +138,7 @@ const ImageProcessingApp = () => {
     addLog('パラメタをCSVファイルにエクスポートしました');
   };
 
+  // パラメタのCSVインポート
   const importParamsFromCSV = (event) => {
     const file = event.target.files[0];
     if (!file) return;
@@ -142,7 +150,6 @@ const ImageProcessingApp = () => {
         const lines = text.split('\n').filter(line => line.trim());
         const headers = lines[0].split(',');
         
-        // ヘッダーから共分散の有無を判定
         const hasSigmaXY = headers.includes('sigma_xy');
         
         const params = [];
@@ -170,11 +177,9 @@ const ImageProcessingApp = () => {
           throw new Error('有効なパラメタが見つかりませんでした');
         }
         
-        // パラメタを設定
         setGaussianParams(params);
         setHasCovariance(hasSigmaXY);
         
-        // バックエンドに送信して画像更新
         setLoadingParams(true);
         const response = await fetch('http://localhost:18000/update-params', {
           method: 'POST',
@@ -187,13 +192,11 @@ const ImageProcessingApp = () => {
         if (!response.ok) {
           throw new Error(`HTTP error! status: ${response.status}`);
         }
-        addLog(`TODO: step4`);
 
         const data = await response.json();
         setPredictedImage(`data:image/png;base64,${data.predicted_image}`);
         setPointsImage(`data:image/png;base64,${data.points_image}`);
         
-        // ガウシアン数を更新
         setNumGaussians(params.length);
         
         addLog(`CSVファイルからパラメタをインポートしました: ${params.length}個のガウシアン`);
@@ -212,9 +215,10 @@ const ImageProcessingApp = () => {
     event.target.value = '';
   };
 
+  // 画像ファイルから初期化
   const initializeWithImage = async (file) => {
     setAppState('loading');
-    addLog(`画像初期化開始: ガウシアン数=${numGaussians}, 近似方法=${approximationMethod === 'variance' ? '分散' : '分散共分散'}`);
+    addLog(`初期化開始: 近似方法=${approximationMethod === 'variance' ? '分散' : '分散共分散'}, ガウシアン数=${numGaussians}`);
 
     try {
       const formData = new FormData();
@@ -253,6 +257,7 @@ const ImageProcessingApp = () => {
     }
   };
 
+  // 画像アップロード
   const handleImageUpload = async (event) => {
     const file = event.target.files[0];
     if (!file) return;
@@ -269,6 +274,7 @@ const ImageProcessingApp = () => {
     window.scrollTo(0, scrollY);
   };
 
+  // 再初期化（画像はそのまま再利用）
   const handleReinitialize = async () => {
     if (!currentFile) return;
     
@@ -282,12 +288,15 @@ const ImageProcessingApp = () => {
     setTotalSteps(0);
     setCurrentLoss(null);
     
-    addLog(`パラメタ再適用: ガウシアン数=${numGaussians}`);
+    addLog(`パラメタ再適用: 近似方法=${approximationMethod === 'variance' ? '分散' : '分散共分散'}, ガウシアン数=${numGaussians}`);
     
     const scrollY = window.scrollY;
-    
+    const className = approximationMethod === 'variance' 
+      ? 'GaussianSplatting2D_only_variance' 
+      : 'GaussianSplatting2D';
+
     try {
-      const response = await fetch(`http://localhost:18000/reinitialize?num_gaussians=${numGaussians}`, {
+      const response = await fetch(`http://localhost:18000/reinitialize?class_name=${className}&num_gaussians=${numGaussians}`, {
         method: 'POST',
       });
 
@@ -313,17 +322,12 @@ const ImageProcessingApp = () => {
     window.scrollTo(0, scrollY);
   };
 
+  // 最適化処理：実行
   const startTraining = async () => {
     if (appState !== 'loaded' && appState !== 'paused') return;
 
-    // TODO: メッセージボックスでユーザが実行有無を選択するようにしたい
-    // if (currentFile) {
-    //   addLog(`パラメタ確認: ガウシアン数=${numGaussians}`);
-    //   await handleReinitialize();
-    // }
-
     setAppState('training');
-    addLog(`学習開始: ガウシアン数=${numGaussians}, LR=${learningRate}, Steps=${numSteps}, 更新間隔=${updateInterval}, 誤差関数=${lossFunction === 'l2' ? 'L2' : 'L1+SSIM'}`);
+    addLog(`学習開始: 近似方法=${approximationMethod === 'variance' ? '分散' : '分散共分散'}, 誤差関数=${lossFunction === 'l2' ? 'L2' : lossFunction === 'mse' ? 'MSE' : 'L1+SSIM'}, ガウシアン数=${numGaussians}, LR=${learningRate}, Steps=${numSteps}, 更新間隔=${updateInterval}`);
     setCurrentStep(0);
     setTotalSteps(numSteps);
 
@@ -379,6 +383,7 @@ const ImageProcessingApp = () => {
     };
   };
 
+  // 最適化処理：中断
   const stopTraining = async () => {
     if (appState !== 'training') return;
 
@@ -401,10 +406,12 @@ const ImageProcessingApp = () => {
     }
   };
 
+  // ボタンクリック：画像アップロード
   const handleUploadClick = () => {
     fileInputRef.current?.click();
   };
 
+  // ボタンクリック：アプリリセット
   const resetApp = () => {
     setAppState('waiting');
     setOriginalImage(null);
@@ -417,610 +424,78 @@ const ImageProcessingApp = () => {
     setCurrentFile(null);
   };
 
-  const progressPercentage = totalSteps > 0 ? (currentStep / totalSteps) * 100 : 0;
+  // ボタンクリック：パラメタ編集ボタン
+  const handleShowParams = () => {
+    setShowParams(true);
+    loadGaussianParams();
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-100 to-gray-200 p-4">
       <div className="max-w-7xl mx-auto">
-        {/* ヘッダー */}
-        <div className="mb-4">
-          <div className="flex items-center justify-between">
-            <h1 className="text-4xl font-bold text-gray-800">
-              2DGS
-            </h1>
-            <div className="flex items-center gap-4 text-sm text-gray-600">
-              <button
-                onClick={() => setShowHelp(true)}
-                className="flex items-center gap-2 bg-blue-100 hover:bg-blue-200 text-blue-700 px-4 py-2 rounded-lg shadow transition-colors"
-              >
-                <HelpCircle className="w-4 h-4" />
-                <span>使い方</span>
-              </button>
-              <div className="flex items-center gap-2 bg-white px-4 py-2 rounded-lg shadow">
-                <Cpu className="w-4 h-4" />
-                <span>デバイス: {deviceInfo || '取得中...'}</span>
-              </div>
-              <div className="bg-white px-4 py-2 rounded-lg shadow">
-                状態: <span className="font-semibold">{
-                  appState === 'waiting' ? '待機中' :
-                  appState === 'loading' ? '読み込み中' :
-                  appState === 'loaded' ? '準備完了' :
-                  appState === 'training' ? '学習中' :
-                  appState === 'paused' ? '一時停止' : '不明'
-                }</span>
-              </div>
-            </div>
-          </div>
-        </div>
+        <Header 
+          setShowHelp={setShowHelp}
+          deviceInfo={deviceInfo}
+          appState={appState}
+        />
 
-        {/* メインコンテンツ：3列レイアウト */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          {/* 左列：オリジナル画像 */}
-          <div className="space-y-4">
-            <div className="bg-white rounded-xl shadow-lg p-4">
-              <div className="flex items-center justify-between mb-2">
-                <h2 className="text-xl font-semibold text-gray-700">
-                  Original Image
-                </h2>
-                {originalImage && (
-                  <button
-                    onClick={handleUploadClick}
-                    className="bg-gray-500 hover:bg-gray-600 text-white px-4 py-1 rounded-lg transition-colors text-sm"
-                    disabled={appState === 'training'}
-                  >
-                    別の画像を選択
-                  </button>
-                )}
-              </div>
-              <div className="border-2 border-dashed border-gray-300 rounded-lg aspect-square flex items-center justify-center bg-gray-50 overflow-hidden">
-                {originalImage ? (
-                  <img 
-                    src={originalImage} 
-                    alt="Original" 
-                    className="max-w-full max-h-full object-contain"
-                  />
-                ) : appState === 'loading' ? (
-                  <div className="text-center">
-                    <Loader2 className="w-8 h-8 text-blue-500 animate-spin mx-auto mb-2" />
-                    <p className="text-gray-600">画像読み込み中...</p>
-                  </div>
-                ) : (
-                  <div className="text-center">
-                    <Upload className="w-12 h-12 text-gray-400 mx-auto mb-2" />
-                    <p className="text-gray-500 mb-4">画像をアップロード</p>
-                    <button
-                      onClick={handleUploadClick}
-                      className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-2 rounded-lg transition-colors"
-                    >
-                      画像を選択
-                    </button>
-                  </div>
-                )}
-              </div>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                onChange={handleImageUpload}
-                className="hidden"
-              />
-            </div>
-          </div>
+        <ImageDisplay 
+          originalImage={originalImage}
+          predictedImage={predictedImage}
+          pointsImage={pointsImage}
+          appState={appState}
+          handleUploadClick={handleUploadClick}
+          onShowParams={handleShowParams}
+          fileInputRef={fileInputRef}
+          handleImageUpload={handleImageUpload}
+        />
 
-          {/* 中央列：予測画像 */}
-          <div className="space-y-4">
-            <div className="bg-white rounded-xl shadow-lg p-4">
-              <h2 className="text-xl font-semibold mb-2 text-gray-700">
-                Predicted Image
-              </h2>
-              <div className="border-2 border-gray-200 rounded-lg aspect-square flex items-center justify-center bg-gray-50 overflow-hidden">
-                {predictedImage ? (
-                  <img 
-                    src={predictedImage} 
-                    alt="Predicted" 
-                    className="max-w-full max-h-full object-contain"
-                  />
-                ) : (
-                  <div className="text-center text-gray-400">
-                    <p>処理待機中</p>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* 右列：ガウシアンポイント */}
-          <div className="space-y-4">
-            <div className="bg-white rounded-xl shadow-lg p-4">
-              <div className="flex items-center justify-between mb-2">
-                <h2 className="text-xl font-semibold text-gray-700">
-                  Gaussian Points
-                </h2>
-                {pointsImage && (
-                  <button
-                    onClick={() => {
-                      setShowParams(true);
-                      loadGaussianParams();
-                    }}
-                    className="bg-indigo-500 hover:bg-indigo-600 text-white px-4 py-1 rounded-lg transition-colors text-sm flex items-center gap-1"
-                    disabled={appState === 'training'}
-                  >
-                    <List className="w-4 h-4" />
-                    パラメタ表示
-                  </button>
-                )}
-              </div>
-              <div className="border-2 border-gray-200 rounded-lg aspect-square flex items-center justify-center bg-gray-50 overflow-hidden">
-                {pointsImage ? (
-                  <img 
-                    src={pointsImage} 
-                    alt="Gaussian Points" 
-                    className="max-w-full max-h-full object-contain"
-                  />
-                ) : (
-                  <div className="text-center text-gray-400">
-                    <p>処理待機中</p>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* 下段：パラメタ/コントロール + ログ + プログレスバー */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mt-4">
-          {/* 左列：パラメタ設定＆学習コントロール */}
-          <div className="bg-white rounded-xl shadow-lg p-4">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-xl font-semibold flex items-center gap-2">
-                <Settings className="w-5 h-5" />
-                パラメタ設定
-              </h2>
-              {(appState === 'loaded' || appState === 'paused') && (
-                <button
-                  onClick={handleReinitialize}
-                  className="bg-purple-500 hover:bg-purple-600 text-white px-3 py-1 rounded-lg transition-colors flex items-center gap-1 text-sm"
-                  disabled={appState === 'training'}
-                >
-                  <RefreshCw className="w-3 h-3" />
-                  再初期化
-                </button>
-              )}
-            </div>
-            <div className="space-y-2 mb-3">
-              <div className="flex items-center gap-2">
-                <label className="text-sm font-medium text-gray-700 w-32 flex-shrink-0">
-                  近似方法
-                </label>
-                <select
-                  value={approximationMethod}
-                  onChange={(e) => setApproximationMethod(e.target.value)}
-                  className="flex-1 px-2 py-1 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                  disabled={appState === 'training'}
-                >
-                  <option value="covariance">分散共分散</option>
-                  <option value="variance">分散</option>
-                </select>
-              </div>
-              <div className="flex items-center gap-2">
-                <label className="text-sm font-medium text-gray-700 w-32 flex-shrink-0">
-                  誤差関数
-                </label>
-                <select
-                  value={lossFunction}
-                  onChange={(e) => setLossFunction(e.target.value)}
-                  className="flex-1 px-2 py-1 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                  disabled={appState === 'training'}
-                >
-                  <option value="l1_ssim">L1+SSIM</option>
-                  <option value="l2">L2</option>
-                  <option value="mse">MSE</option>
-                </select>
-              </div>
-              <div className="flex items-center gap-2">
-                <label className="text-sm font-medium text-gray-700 w-32 flex-shrink-0">
-                  ガウシアン数
-                </label>
-                <input
-                  type="number"
-                  value={numGaussians}
-                  onChange={(e) => setNumGaussians(parseInt(e.target.value))}
-                  className="flex-1 px-2 py-1 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                  min="1"
-                  max="5000"
-                  step="100"
-                  disabled={appState === 'training'}
-                />
-              </div>
-              <div className="flex items-center gap-2">
-                <label className="text-sm font-medium text-gray-700 w-32 flex-shrink-0">
-                  学習率
-                </label>
-                <input
-                  type="number"
-                  value={learningRate}
-                  onChange={(e) => setLearningRate(parseFloat(e.target.value))}
-                  className="flex-1 px-2 py-1 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                  min="0.001"
-                  max="0.1"
-                  step="0.001"
-                  disabled={appState === 'training'}
-                />
-              </div>
-              <div className="flex items-center gap-2">
-                <label className="text-sm font-medium text-gray-700 w-32 flex-shrink-0">
-                  学習ステップ数
-                </label>
-                <input
-                  type="number"
-                  value={numSteps}
-                  onChange={(e) => setNumSteps(parseInt(e.target.value))}
-                  className="flex-1 px-2 py-1 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                  min="100"
-                  max="50000"
-                  step="100"
-                  disabled={appState === 'training'}
-                />
-              </div>
-              <div className="flex items-center gap-2">
-                <label className="text-sm font-medium text-gray-700 w-32 flex-shrink-0">
-                  画面更新間隔
-                </label>
-                <input
-                  type="number"
-                  value={updateInterval}
-                  onChange={(e) => setUpdateInterval(parseInt(e.target.value))}
-                  className="flex-1 px-2 py-1 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                  min="1"
-                  max="1000"
-                  step="10"
-                  disabled={appState === 'training'}
-                />
-              </div>
-            </div>
+          <ParameterSettings 
+            appState={appState}
+            approximationMethod={approximationMethod}
+            setApproximationMethod={setApproximationMethod}
+            lossFunction={lossFunction}
+            setLossFunction={setLossFunction}
+            numGaussians={numGaussians}
+            setNumGaussians={setNumGaussians}
+            learningRate={learningRate}
+            setLearningRate={setLearningRate}
+            numSteps={numSteps}
+            setNumSteps={setNumSteps}
+            updateInterval={updateInterval}
+            setUpdateInterval={setUpdateInterval}
+            handleReinitialize={handleReinitialize}
+            startTraining={startTraining}
+            stopTraining={stopTraining}
+            resetApp={resetApp}
+          />
 
-            {/* 学習コントロール */}
-            {(appState === 'loaded' || appState === 'training' || appState === 'paused') && (
-              <div>
-                <h3 className="text-lg font-semibold mb-2 text-gray-700">
-                  学習コントロール
-                </h3>
-
-                {/* ボタン */}
-                <div className="space-y-2">
-                  {appState === 'loaded' || appState === 'paused' ? (
-                    <button
-                      onClick={startTraining}
-                      className="w-full bg-green-500 hover:bg-green-600 text-white px-6 py-2 rounded-lg transition-colors flex items-center justify-center gap-2 font-semibold"
-                    >
-                      <Play className="w-5 h-5" />
-                      実行
-                    </button>
-                  ) : (
-                    <button
-                      onClick={stopTraining}
-                      className="w-full bg-red-500 hover:bg-red-600 text-white px-6 py-2 rounded-lg transition-colors flex items-center justify-center gap-2 font-semibold"
-                    >
-                      <Square className="w-5 h-5" />
-                      学習中断
-                    </button>
-                  )}
-                  
-                  <button
-                    onClick={resetApp}
-                    className="w-full bg-gray-500 hover:bg-gray-600 text-white px-6 py-2 rounded-lg transition-colors"
-                    disabled={appState === 'training'}
-                  >
-                    リセット
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* 中央～右列：処理状況（プログレスバー + ログ） */}
-          <div className="lg:col-span-2 bg-white rounded-xl shadow-lg p-4">
-            <h2 className="text-xl font-semibold mb-3 text-gray-700">
-              処理状況
-            </h2>
-            
-            {/* プログレスバー */}
-            {totalSteps > 0 && (
-              <div className="mb-3">
-                <div className="flex justify-between text-sm text-gray-600 mb-1">
-                  <span>学習進捗</span>
-                  <span>{progressPercentage.toFixed(1)}%</span>
-                </div>
-                <div className="w-full bg-gray-200 rounded-full h-3 mb-2">
-                  <div 
-                    className="h-3 bg-gradient-to-r from-blue-500 to-green-500 rounded-full transition-all duration-300"
-                    style={{ width: `${progressPercentage}%` }}
-                  ></div>
-                </div>
-                <div className="flex justify-between text-sm text-gray-600">
-                  <div>
-                    ステップ: <span className="font-semibold">{currentStep} / {totalSteps}</span>
-                  </div>
-                  {currentLoss !== null && (
-                    <div>
-                      Loss: <span className="font-mono font-semibold">{currentLoss.toFixed(6)}</span>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-            
-            {/* 処理ログ */}
-            <div>
-              <h3 className="text-sm font-semibold mb-2 text-gray-600">処理ログ</h3>
-              <div className="bg-gray-900 text-green-400 p-3 rounded-lg font-mono text-xs h-64 overflow-y-auto">
-                {logs.length > 0 ? (
-                  <>
-                    {logs.map((log, index) => (
-                      <div key={index} className="mb-1">
-                        {log}
-                      </div>
-                    ))}
-                    <div ref={logsEndRef} />
-                  </>
-                ) : (
-                  <div className="text-gray-500 text-center py-8">
-                    ログはまだありません
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
+          <ProcessStatus 
+            totalSteps={totalSteps}
+            currentStep={currentStep}
+            currentLoss={currentLoss}
+            logs={logs}
+            logsEndRef={logsEndRef}
+          />
         </div>
 
-        {/* パラメタ表示モーダル */}
-        {showParams && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-xl shadow-2xl max-w-6xl w-full max-h-[90vh] flex flex-col">
-              <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
-                <h3 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
-                  <List className="w-6 h-6 text-indigo-500" />
-                  ガウシアンパラメタ {hasCovariance ? '(分散共分散)' : '(分散のみ)'}
-                </h3>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => paramFileInputRef.current?.click()}
-                    className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg transition-colors flex items-center gap-2"
-                  >
-                    <FileUp className="w-4 h-4" />
-                    インポート
-                  </button>
-                  <input
-                    ref={paramFileInputRef}
-                    type="file"
-                    accept=".csv"
-                    onChange={importParamsFromCSV}
-                    className="hidden"
-                  />
-                  <button
-                    onClick={exportParamsAsCSV}
-                    className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg transition-colors flex items-center gap-2"
-                  >
-                    <Download className="w-4 h-4" />
-                    エクスポート
-                  </button>
-                  <button
-                    onClick={() => setShowParams(false)}
-                    className="text-gray-400 hover:text-gray-600 transition-colors"
-                  >
-                    <X className="w-6 h-6" />
-                  </button>
-                </div>
-              </div>
-              
-              <div className="flex-1 overflow-y-auto p-6">
-                {loadingParams ? (
-                  <div className="flex items-center justify-center py-12">
-                    <Loader2 className="w-8 h-8 text-indigo-500 animate-spin" />
-                    <span className="ml-3 text-gray-600">読み込み中...</span>
-                  </div>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm border-collapse">
-                      <thead className="bg-gray-100 sticky top-0">
-                        <tr>
-                          <th className="border border-gray-300 px-3 py-2 text-left font-semibold">Index</th>
-                          <th className="border border-gray-300 px-3 py-2 text-left font-semibold">Mean X</th>
-                          <th className="border border-gray-300 px-3 py-2 text-left font-semibold">Mean Y</th>
-                          <th className="border border-gray-300 px-3 py-2 text-left font-semibold">Sigma X</th>
-                          <th className="border border-gray-300 px-3 py-2 text-left font-semibold">Sigma Y</th>
-                          {hasCovariance && (
-                            <th className="border border-gray-300 px-3 py-2 text-left font-semibold">Sigma XY</th>
-                          )}
-                          <th className="border border-gray-300 px-3 py-2 text-left font-semibold">Weight</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {gaussianParams.map((param) => (
-                          <tr key={param.index} className="hover:bg-gray-50">
-                            <td className="border border-gray-300 px-3 py-2">{param.index}</td>
-                            <td className="border border-gray-300 px-1 py-1">
-                              <input
-                                type="number"
-                                value={param.mean_x.toFixed(4)}
-                                onChange={(e) => handleParamChange(param.index, 'mean_x', e.target.value)}
-                                className="w-full px-2 py-1 border border-gray-200 rounded focus:ring-2 focus:ring-indigo-500 text-xs"
-                                step="0.1"
-                              />
-                            </td>
-                            <td className="border border-gray-300 px-1 py-1">
-                              <input
-                                type="number"
-                                value={param.mean_y.toFixed(4)}
-                                onChange={(e) => handleParamChange(param.index, 'mean_y', e.target.value)}
-                                className="w-full px-2 py-1 border border-gray-200 rounded focus:ring-2 focus:ring-indigo-500 text-xs"
-                                step="0.1"
-                              />
-                            </td>
-                            <td className="border border-gray-300 px-1 py-1">
-                              <input
-                                type="number"
-                                value={param.sigma_x.toFixed(4)}
-                                onChange={(e) => handleParamChange(param.index, 'sigma_x', e.target.value)}
-                                className="w-full px-2 py-1 border border-gray-200 rounded focus:ring-2 focus:ring-indigo-500 text-xs"
-                                step="0.1"
-                              />
-                            </td>
-                            <td className="border border-gray-300 px-1 py-1">
-                              <input
-                                type="number"
-                                value={param.sigma_y.toFixed(4)}
-                                onChange={(e) => handleParamChange(param.index, 'sigma_y', e.target.value)}
-                                className="w-full px-2 py-1 border border-gray-200 rounded focus:ring-2 focus:ring-indigo-500 text-xs"
-                                step="0.1"
-                              />
-                            </td>
-                            {hasCovariance && (
-                              <td className="border border-gray-300 px-1 py-1">
-                                <input
-                                  type="number"
-                                  value={param.sigma_xy?.toFixed(4) || '0'}
-                                  onChange={(e) => handleParamChange(param.index, 'sigma_xy', e.target.value)}
-                                  className="w-full px-2 py-1 border border-gray-200 rounded focus:ring-2 focus:ring-indigo-500 text-xs"
-                                  step="0.1"
-                                />
-                              </td>
-                            )}
-                            <td className="border border-gray-300 px-1 py-1">
-                              <input
-                                type="number"
-                                value={param.weight.toFixed(4)}
-                                onChange={(e) => handleParamChange(param.index, 'weight', e.target.value)}
-                                className="w-full px-2 py-1 border border-gray-200 rounded focus:ring-2 focus:ring-indigo-500 text-xs"
-                                step="0.01"
-                                min="0"
-                                max="1"
-                              />
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-              
-              <div className="sticky bottom-0 bg-white border-t border-gray-200 px-6 py-4 flex items-center justify-between">
-                <div className="text-sm text-gray-600">
-                  全 {gaussianParams.length} 個のガウシアン
-                </div>
-                <div className="flex gap-3">
-                  <button
-                    onClick={() => setShowParams(false)}
-                    className="bg-gray-500 hover:bg-gray-600 text-white px-6 py-2 rounded-lg transition-colors"
-                  >
-                    キャンセル
-                  </button>
-                  <button
-                    onClick={updateGaussianParams}
-                    disabled={loadingParams}
-                    className="bg-indigo-500 hover:bg-indigo-600 text-white px-6 py-2 rounded-lg transition-colors flex items-center gap-2 font-semibold disabled:opacity-50"
-                  >
-                    {loadingParams ? (
-                      <>
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                        更新中...
-                      </>
-                    ) : (
-                      <>
-                        <Save className="w-4 h-4" />
-                        パラメタを適用
-                      </>
-                    )}
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
+        <ParamsModal 
+          showParams={showParams}
+          setShowParams={setShowParams}
+          gaussianParams={gaussianParams}
+          hasCovariance={hasCovariance}
+          loadingParams={loadingParams}
+          handleParamChange={handleParamChange}
+          updateGaussianParams={updateGaussianParams}
+          exportParamsAsCSV={exportParamsAsCSV}
+          importParamsFromCSV={importParamsFromCSV}
+        />
 
-        {/* ヘルプモーダル */}
-        {showHelp && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[80vh] overflow-y-auto">
-              <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
-                <h3 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
-                  <HelpCircle className="w-6 h-6 text-blue-500" />
-                  使い方
-                </h3>
-                <button
-                  onClick={() => setShowHelp(false)}
-                  className="text-gray-400 hover:text-gray-600 transition-colors"
-                >
-                  <X className="w-6 h-6" />
-                </button>
-              </div>
-              <div className="p-6">
-                <div className="space-y-4 text-gray-700">
-                  <div className="bg-blue-50 border-l-4 border-blue-500 p-4 rounded">
-                    <h4 className="font-semibold text-blue-800 mb-2">📝 基本的な流れ</h4>
-                    <ol className="list-decimal list-inside space-y-2 text-sm">
-                      <li>パラメタを設定してください（ガウシアン数、学習率、ステップ数、更新間隔）</li>
-                      <li>画像をアップロードすると、GaussianSplattingの初期化が行われます</li>
-                      <li>「実行」ボタンで最適化計算を開始します（自動的に最新パラメタで再初期化されます）</li>
-                      <li>学習中は中央と右側の画像がリアルタイムで更新されます</li>
-                      <li>「学習中断」ボタンでいつでも処理を停止できます</li>
-                    </ol>
-                  </div>
-                  
-                  <div className="bg-green-50 border-l-4 border-green-500 p-4 rounded">
-                    <h4 className="font-semibold text-green-800 mb-2">⚙️ パラメタ説明</h4>
-                    <ul className="space-y-2 text-sm">
-                      <li><strong>近似方法:</strong> ガウシアンの表現方法（分散のみ or 分散共分散行列）</li>
-                      <li><strong>誤差関数:</strong> 学習に使用する損失関数（L2 or L1+SSIM）</li>
-                      <li><strong>ガウシアン数:</strong> 画像を近似するガウシアン点の数（多いほど精密だが計算時間が増加）</li>
-                      <li><strong>学習率:</strong> 最適化の更新幅（大きいほど速いが不安定になる可能性）</li>
-                      <li><strong>学習ステップ数:</strong> 最適化の反復回数（多いほど精度が向上）</li>
-                      <li><strong>画面更新間隔:</strong> 何ステップごとに画面を更新するか（小さいほど頻繁に更新）</li>
-                    </ul>
-                  </div>
-                  
-                  <div className="bg-purple-50 border-l-4 border-purple-500 p-4 rounded">
-                    <h4 className="font-semibold text-purple-800 mb-2">🎯 表示画像の説明</h4>
-                    <ul className="space-y-2 text-sm">
-                      <li><strong>Original Image:</strong> アップロードされた元画像</li>
-                      <li><strong>Predicted Image:</strong> ガウシアンで近似された予測画像</li>
-                      <li><strong>Gaussian Points:</strong> 各ガウシアンの中心位置を赤点で表示</li>
-                    </ul>
-                  </div>
-                  
-                  <div className="bg-indigo-50 border-l-4 border-indigo-500 p-4 rounded">
-                    <h4 className="font-semibold text-indigo-800 mb-2">📊 パラメタ表示機能</h4>
-                    <ul className="space-y-2 text-sm">
-                      <li>「パラメタ表示」ボタンで現在のガウシアンパラメタを確認できます</li>
-                      <li>各パラメタは編集可能で、「パラメタを適用」で即座に反映されます</li>
-                      <li>「CSV出力」ボタンでパラメタをCSVファイルとしてダウンロードできます</li>
-                    </ul>
-                  </div>
-                  
-                  <div className="bg-yellow-50 border-l-4 border-yellow-500 p-4 rounded">
-                    <h4 className="font-semibold text-yellow-800 mb-2">💡 Tips</h4>
-                    <ul className="space-y-2 text-sm">
-                      <li>パラメタ変更後は「再初期化」ボタンで即座に反映できます</li>
-                      <li>学習中でも「学習中断」でいつでも停止可能です</li>
-                      <li>処理ログで学習の進捗とLoss値を確認できます</li>
-                      <li>GPU使用時は大幅に高速化されます（デバイス情報を確認）</li>
-                    </ul>
-                  </div>
-                </div>
-                
-                <div className="mt-6 text-center">
-                  <button
-                    onClick={() => setShowHelp(false)}
-                    className="bg-blue-500 hover:bg-blue-600 text-white px-8 py-3 rounded-lg transition-colors font-semibold"
-                  >
-                    閉じる
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
+        <HelpModal 
+          showHelp={showHelp}
+          setShowHelp={setShowHelp}
+        />
       </div>
     </div>
   );

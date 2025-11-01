@@ -251,7 +251,7 @@ class GaussianSplatting2D():
         return loss
     
     def _calc_loss_l2(self, img_pred: torch.Tensor, img_gt: torch.Tensor) -> torch.Tensor:
-        loss = torch.sum((img_pred - img_gt) ** 2) ** 0.5
+        loss = F.sse_loss(img_pred, img_gt)
         return loss
     
     def _calc_loss_mse(self, img_pred: torch.Tensor, img_gt: torch.Tensor) -> torch.Tensor:
@@ -259,7 +259,7 @@ class GaussianSplatting2D():
         return loss
 
     async def calculate_async(self, num_steps:int=_NUM_STEPS, opt_lr:float=_LEARNING_RATE, 
-                             loss_func_name="_calc_loss_l1_ssim", update_interval:int=100, websocket=None):
+                             loss_func_name:str="_calc_loss_l1_ssim", update_interval:int=100, websocket=None):
         """
         2DGSの計算実行（非同期版）
         num_steps: 学習時のイテレーション回数 

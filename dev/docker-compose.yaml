@@ -2,9 +2,17 @@ services:
   # 開発用環境
   2dgs_backend:
     build:
-      context: ./backend
+      context: ../backend
       dockerfile: Dockerfile
     image: gsapp_back
+    deploy:
+      resources:
+        reservations:
+          devices:
+            # すべてのGPUへのアクセスを許可
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     volumes:
       - ../:/mnt/project
     environment:

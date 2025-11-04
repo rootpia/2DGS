@@ -36,9 +36,21 @@ const ImageProcessingApp = () => {
   const wsRef = useRef(null);
   const logsEndRef = useRef(null);
 
+  // backend APIのURL取得
+  const createWebSocketUrl = (url) => {
+    if (url.startsWith('https')) {
+      return url.replace('https', 'wss');
+    } else if (url.startsWith('http')) {
+      return url.replace('http', 'ws');
+    }
+    return url; 
+  };
+  const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+  const WS_BACKEND_URL = createWebSocketUrl(BACKEND_URL);
+
   // デバイス情報取得
   useEffect(() => {
-    fetch('http://localhost:18000/device-info')
+    fetch(`${BACKEND_URL}/device-info`)
       .then(res => res.json())
       .then(data => setDeviceInfo(data.device))
       .catch(err => console.error('デバイス情報取得エラー:', err));
@@ -60,7 +72,7 @@ const ImageProcessingApp = () => {
   const loadGaussianParams = async () => {
     setLoadingParams(true);
     try {
-      const response = await fetch('http://localhost:18000/get-params');
+      const response = await fetch(`${BACKEND_URL}/get-params`);
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
@@ -81,7 +93,7 @@ const ImageProcessingApp = () => {
   const updateGaussianParams = async () => {
     setLoadingParams(true);
     try {
-      const response = await fetch('http://localhost:18000/update-params', {
+      const response = await fetch(`${BACKEND_URL}/update-params`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -181,7 +193,7 @@ const ImageProcessingApp = () => {
         setHasCovariance(hasSigmaXY);
         
         setLoadingParams(true);
-        const response = await fetch('http://localhost:18000/update-params', {
+        const response = await fetch(`${BACKEND_URL}/update-params`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -230,7 +242,7 @@ const ImageProcessingApp = () => {
         : 'GaussianSplatting2D';
       formData.append('class_name', className);
 
-      const response = await fetch('http://localhost:18000/initialize', {
+      const response = await fetch(`${BACKEND_URL}/initialize`, {
         method: 'POST',
         body: formData,
       });
@@ -296,7 +308,7 @@ const ImageProcessingApp = () => {
       : 'GaussianSplatting2D';
 
     try {
-      const response = await fetch(`http://localhost:18000/reinitialize?class_name=${className}&num_gaussians=${numGaussians}`, {
+      const response = await fetch(`${BACKEND_URL}/reinitialize?class_name=${className}&num_gaussians=${numGaussians}`, {
         method: 'POST',
       });
 
@@ -331,7 +343,7 @@ const ImageProcessingApp = () => {
     setCurrentStep(0);
     setTotalSteps(numSteps);
 
-    const ws = new WebSocket('ws://localhost:18000/train');
+    const ws = new WebSocket(`${WS_BACKEND_URL}/train`);
     wsRef.current = ws;
 
     ws.onopen = () => {
@@ -390,7 +402,7 @@ const ImageProcessingApp = () => {
     addLog('学習中断リクエスト送信...');
     
     try {
-      await fetch('http://localhost:18000/stop', {
+      await fetch(`${BACKEND_URL}/stop`, {
         method: 'POST',
       });
       

@@ -3,13 +3,12 @@ services:
   app:
     build: 
       context: ./frontend
+      args:
+        - REACT_APP_BACKEND_URL=http://localhost:18000
       dockerfile: Dockerfile
     image: gsapp_front
     ports:
       - "3000:3000"
-    environment:
-      - CHOKIDAR_USEPOLLING=true
-      - REACT_APP_BACKEND_URL=http://localhost:18000
     depends_on:
       - backend
     networks:
@@ -31,10 +30,9 @@ services:
               capabilities: [gpu]
     ports:
       - "18000:18000"
-    # volumes:
-    #   - ./:/mnt/project
     environment:
       - PYTHONPATH=/app
+      - CORS_ALLOWED_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
     networks:
       - app-network
 

@@ -287,7 +287,6 @@ class GaussianSplatting2D():
             img_pred = self._generate_predicted_image()
 
             # 誤差計算
-            print(f"loss_func_name={loss_func_name}")
             method = getattr(self, loss_func_name, None)
             loss = method(img_pred, target_img)
             loss.backward()

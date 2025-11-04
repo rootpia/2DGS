@@ -47,7 +47,7 @@ const ImageProcessingApp = () => {
   };
   const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
   const WS_BACKEND_URL = createWebSocketUrl(BACKEND_URL);
-
+  
   // デバイス情報取得
   useEffect(() => {
     fetch(`${BACKEND_URL}/device-info`)

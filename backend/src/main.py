@@ -1,3 +1,4 @@
+import os
 from fastapi import FastAPI, File, UploadFile, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -9,13 +10,15 @@ from GaussianSplatting2D import GaussianSplatting2D
 from GaussianSplatting2D_only_variance import GaussianSplatting2D_only_variance
 
 # Global
-APP_VERSION = "2.0.0"
+APP_VERSION = "1.0.0"
 app = FastAPI(title="2dgs_API", version=APP_VERSION)
 
 # CORS設定
+cor_origins = os.environ['CORS_ALLOWED_ORIGINS']
+cor_origins_list = cor_origins.split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "http://frontend:3000"],
+    allow_origins=cor_origins_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
